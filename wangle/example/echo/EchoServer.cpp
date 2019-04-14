@@ -60,6 +60,7 @@ int main(int argc, char** argv) {
   ServerBootstrap<EchoPipeline> server;
   server.childPipeline(std::make_shared<EchoPipelineFactory>());
   server.bind(FLAGS_port);
+  std::cout << "bound to port " << FLAGS_port << std::endl;
   server.waitForStop();
 
   return 0;
