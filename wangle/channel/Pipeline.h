@@ -1,11 +1,11 @@
 /*
- * Copyright 2017-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -23,6 +23,7 @@
 #include <folly/Unit.h>
 #include <folly/io/IOBufQueue.h>
 #include <folly/io/async/AsyncTransport.h>
+#include <folly/io/async/AsyncUDPSocket.h>
 #include <folly/io/async/DelayedDestruction.h>
 #include <wangle/acceptor/SecureTransportType.h>
 #include <wangle/acceptor/TransportInfo.h>
@@ -38,6 +39,7 @@ class PipelineManager {
   virtual ~PipelineManager() = default;
   virtual void deletePipeline(PipelineBase* pipeline) = 0;
   virtual void refreshTimeout() {}
+  virtual void adjustTimeout(std::chrono::milliseconds /*newTimeout*/) {}
 };
 
 class PipelineBase : public std::enable_shared_from_this<PipelineBase> {
@@ -230,9 +232,6 @@ class Pipeline : public PipelineBase {
 namespace folly {
 
 class AsyncSocket;
-class AsyncTransportWrapper;
-class AsyncUDPSocket;
-
 }
 
 namespace wangle {
@@ -244,7 +243,7 @@ template <typename Pipeline>
 class PipelineFactory {
  public:
   virtual typename Pipeline::Ptr newPipeline(
-      std::shared_ptr<folly::AsyncTransportWrapper>) = 0;
+      std::shared_ptr<folly::AsyncTransport>) = 0;
 
   virtual typename Pipeline::Ptr newPipeline(
       std::shared_ptr<folly::AsyncUDPSocket> /* serverSocket */,
@@ -256,7 +255,7 @@ class PipelineFactory {
 };
 
 struct ConnInfo {
-  folly::AsyncTransportWrapper* sock;
+  folly::AsyncTransport* sock;
   const folly::SocketAddress* clientAddr;
   const std::string& nextProtoName;
   SecureTransportType secureType;
@@ -268,13 +267,21 @@ enum class ConnEvent {
   CONN_REMOVED,
 };
 
-typedef boost::variant<folly::IOBuf*,
-                       folly::AsyncTransportWrapper*,
-                       ConnInfo&,
-                       ConnEvent,
-                       std::tuple<folly::IOBuf*,
-                                  std::shared_ptr<folly::AsyncUDPSocket>,
-                                  folly::SocketAddress>> AcceptPipelineType;
+typedef boost::variant<
+    folly::IOBuf*,
+    folly::AsyncTransport*,
+    ConnInfo&,
+    ConnEvent,
+    std::tuple<
+        folly::IOBuf*,
+        std::shared_ptr<folly::AsyncUDPSocket>,
+        folly::SocketAddress>,
+    std::tuple<
+        folly::IOBuf*,
+        std::shared_ptr<folly::AsyncUDPSocket>,
+        folly::SocketAddress,
+        folly::AsyncUDPSocket::ReadCallback::OnDataAvailableParams>>
+    AcceptPipelineType;
 typedef Pipeline<AcceptPipelineType> AcceptPipeline;
 
 class AcceptPipelineFactory {

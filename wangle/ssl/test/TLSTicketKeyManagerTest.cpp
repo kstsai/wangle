@@ -1,11 +1,11 @@
 /*
- * Copyright 2017-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #include <folly/portability/GMock.h>
 #include <folly/portability/GTest.h>
 #include <wangle/ssl/SSLStats.h>
@@ -49,8 +50,7 @@ TEST(TLSTicketKeyManager, TestSetGetTLSTicketKeySeeds) {
   std::vector<std::string> origCurr = {"68"};
   std::vector<std::string> origNext = {"69"};
 
-  folly::SSLContext ctx;
-  wangle::TLSTicketKeyManager manager(&ctx, nullptr);
+  wangle::TLSTicketKeyManager manager;
 
   manager.setTLSTicketKeySeeds(origOld, origCurr, origNext);
   std::vector<std::string> old;
@@ -75,9 +75,8 @@ TEST(TLSTicketKeyManager, TestValidateTicketSeedsSuccess) {
   std::vector<std::string> newCurr = {"69", "79"};
   std::vector<std::string> newNext = {"70", "80"};
 
-  folly::SSLContext ctx;
-  wangle::TLSTicketKeyManager manager(&ctx, &stats);
-
+  wangle::TLSTicketKeyManager manager;
+  manager.setStats(&stats);
   manager.setTLSTicketKeySeeds(origOld, origCurr, origNext);
   manager.setTLSTicketKeySeeds(newOld, newCurr, newNext);
 }
@@ -90,9 +89,8 @@ TEST(TLSTicketKeyManager, TestValidateTicketSeedsIdempotent) {
   std::vector<std::string> origCurr = {"68", "78"};
   std::vector<std::string> origNext = {"69", "79"};
 
-  folly::SSLContext ctx;
-  wangle::TLSTicketKeyManager manager(&ctx, &stats);
-
+  wangle::TLSTicketKeyManager manager;
+  manager.setStats(&stats);
   manager.setTLSTicketKeySeeds(origOld, origCurr, origNext);
   manager.setTLSTicketKeySeeds(origOld, origCurr, origNext);
 }
@@ -112,9 +110,8 @@ TEST(TLSTicketKeyManager, TestValidateTicketSeedsFailure) {
   std::vector<std::string> newCurr = {"70", "80"};
   std::vector<std::string> newNext = {"71", "81"};
 
-  folly::SSLContext ctx;
-  wangle::TLSTicketKeyManager manager(&ctx, &stats);
-
+  wangle::TLSTicketKeyManager manager;
+  manager.setStats(&stats);
   manager.setTLSTicketKeySeeds(origOld, origCurr, origNext);
   manager.setTLSTicketKeySeeds(newOld, newCurr, newNext);
 }
@@ -133,9 +130,8 @@ TEST(TLSTicketKeyManager, TestValidateTicketSeedsSubsetPass) {
   std::vector<std::string> newCurr = {"69"};
   std::vector<std::string> newNext = {"70", "80"};
 
-  folly::SSLContext ctx;
-  wangle::TLSTicketKeyManager manager(&ctx, &stats);
-
+  wangle::TLSTicketKeyManager manager;
+  manager.setStats(&stats);
   manager.setTLSTicketKeySeeds(origOld, origCurr, origNext);
   manager.setTLSTicketKeySeeds(newOld, newCurr, newNext);
 }

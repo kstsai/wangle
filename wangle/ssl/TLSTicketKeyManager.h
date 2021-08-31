@@ -1,11 +1,11 @@
 /*
- * Copyright 2017-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,17 +13,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #pragma once
 
-#include <folly/io/async/SSLContext.h>
 #include <folly/io/async/EventBase.h>
+#include <folly/io/async/SSLContext.h>
+#include <folly/ssl/OpenSSLTicketHandler.h>
 
 namespace wangle {
 
-#ifndef SSL_CTRL_SET_TLSEXT_TICKET_KEY_CB
-class TLSTicketKeyManager {};
-#else
 class SSLStats;
+struct TLSTicketKeySeeds;
 /**
  * The TLSTicketKeyManager handles TLS ticket key encryption and decryption in
  * a way that facilitates sharing the ticket keys across a range of servers.
@@ -60,24 +60,22 @@ class SSLStats;
  * a 1:1 relationship with the SSLContext provided.
  *
  */
-class TLSTicketKeyManager {
+class TLSTicketKeyManager : public folly::OpenSSLTicketHandler {
  public:
-  explicit TLSTicketKeyManager(
-      folly::SSLContext* ctx,
-      SSLStats* stats);
+  static std::unique_ptr<TLSTicketKeyManager> fromSeeds(
+      const TLSTicketKeySeeds* seeds);
+
+  TLSTicketKeyManager();
 
   virtual ~TLSTicketKeyManager();
 
-  /**
-   * SSL callback to set up encryption/decryption context for a TLS Ticket Key.
-   *
-   * This will be supplied to the SSL library via
-   * SSL_CTX_set_tlsext_ticket_key_cb.
-   */
-  static int callback(SSL* ssl, unsigned char* keyName,
-                      unsigned char* iv,
-                      EVP_CIPHER_CTX* cipherCtx,
-                      HMAC_CTX* hmacCtx, int encrypt);
+  int ticketCallback(
+      SSL* ssl,
+      unsigned char* keyName,
+      unsigned char* iv,
+      EVP_CIPHER_CTX* cipherCtx,
+      HMAC_CTX* hmacCtx,
+      int encrypt) override;
 
   /**
    * Initialize the manager with three sets of seeds.  There must be at least
@@ -88,38 +86,40 @@ class TLSTicketKeyManager {
    * @param newSeeds Seeds which will be used soon, can be used to decrypt
    *                 in case some servers in the cluster have already rotated.
    */
-  bool setTLSTicketKeySeeds(const std::vector<std::string>& oldSeeds,
-                            const std::vector<std::string>& currentSeeds,
-                            const std::vector<std::string>& newSeeds);
+  bool setTLSTicketKeySeeds(
+      const std::vector<std::string>& oldSeeds,
+      const std::vector<std::string>& currentSeeds,
+      const std::vector<std::string>& newSeeds);
 
-  bool getTLSTicketKeySeeds(std::vector<std::string>& oldSeeds,
-                            std::vector<std::string>& currentSeeds,
-                            std::vector<std::string>& newSeeds) const;
+  bool getTLSTicketKeySeeds(
+      std::vector<std::string>& oldSeeds,
+      std::vector<std::string>& currentSeeds,
+      std::vector<std::string>& newSeeds) const;
 
-  struct Unsafe {
-    TLSTicketKeyManager* obj;
-    int processTicket(SSL* ssl,
-                      uint8_t* keyName,
-                      uint8_t* iv,
-                      EVP_CIPHER_CTX* cipherCtx,
-                      HMAC_CTX* hmacCtx,
-                      int encrypt) {
-      return CHECK_NOTNULL(obj)
-        ->processTicket(ssl, keyName, iv, cipherCtx, hmacCtx, encrypt);
-    }
-  };
-
-  Unsafe unsafe() { return Unsafe{this}; }
+  /**
+   * Stats object can record new tickets and ticket secret rotations.
+   */
+  void setStats(SSLStats* stats) {
+    stats_ = stats;
+  }
 
  private:
   TLSTicketKeyManager(const TLSTicketKeyManager&) = delete;
   TLSTicketKeyManager& operator=(const TLSTicketKeyManager&) = delete;
 
-  enum TLSTicketSeedType {
-    SEED_OLD = 0,
-    SEED_CURRENT,
-    SEED_NEW
-  };
+  int encryptCallback(
+      unsigned char* keyName,
+      unsigned char* iv,
+      EVP_CIPHER_CTX* cipherCtx,
+      HMAC_CTX* hmacCtx);
+
+  int decryptCallback(
+      unsigned char* keyName,
+      unsigned char* iv,
+      EVP_CIPHER_CTX* cipherCtx,
+      HMAC_CTX* hmacCtx);
+
+  enum TLSTicketSeedType { SEED_OLD = 0, SEED_CURRENT, SEED_NEW };
 
   /* The seeds supplied by the configuration */
   struct TLSTicketSeed {
@@ -135,52 +135,36 @@ class TLSTicketKeyManager {
     unsigned char keySource_[SHA256_DIGEST_LENGTH];
   };
 
-  /**
-   * Method to setup encryption/decryption context for a TLS Ticket Key
-   *
-   * OpenSSL documentation is thin on the return value semantics.
-   *
-   * For encrypt=1, return < 0 on error, >= 0 for successfully initialized
-   * For encrypt=0, return < 0 on error, 0 on key not found
-   *                 1 on key found, 2 renew_ticket
-   *
-   * renew_ticket means a new ticket will be issued.  We could return this value
-   * when receiving a ticket encrypted with a key derived from an OLD seed.
-   * However, session_timeout seconds after deploying with a seed
-   * rotated from  CURRENT -> OLD, there will be no valid tickets outstanding
-   * encrypted with the old key.  This grace period means no unnecessary
-   * handshakes will be performed.  If the seed is believed compromised, it
-   * should NOT be configured as an OLD seed.
-   */
-  int processTicket(SSL* ssl, unsigned char* keyName,
-                    unsigned char* iv,
-                    EVP_CIPHER_CTX* cipherCtx,
-                    HMAC_CTX* hmacCtx, int encrypt);
-
   // Creates the name for the nth key generated from seed
-  std::string makeKeyName(TLSTicketSeed* seed, uint32_t n,
-                          unsigned char* nameBuf);
+  std::string
+  makeKeyName(TLSTicketSeed* seed, uint32_t n, unsigned char* nameBuf);
 
   /**
    * Creates the key hashCount hashes from the given seed and inserts it in
    * ticketKeys.  A naked pointer to the key is returned for additional
    * processing if needed.
    */
-  TLSTicketKeySource* insertNewKey(TLSTicketSeed* seed, uint32_t hashCount,
-                                   TLSTicketKeySource* prevKeySource);
+  TLSTicketKeySource* insertNewKey(
+      TLSTicketSeed* seed,
+      uint32_t hashCount,
+      TLSTicketKeySource* prevKeySource);
 
   /**
    * hashes input N times placing result in output, which must be at least
    * SHA256_DIGEST_LENGTH long.
    */
-  void hashNth(const unsigned char* input, size_t input_len,
-               unsigned char* output, uint32_t n);
+  void hashNth(
+      const unsigned char* input,
+      size_t input_len,
+      unsigned char* output,
+      uint32_t n);
 
   /**
    * Adds the given seed to the manager
    */
-  TLSTicketSeed* insertSeed(const std::string& seedInput,
-                            TLSTicketSeedType type);
+  TLSTicketSeed* insertSeed(
+      const std::string& seedInput,
+      TLSTicketSeedType type);
 
   /**
    * Locate a key for encrypting a new ticket
@@ -203,13 +187,16 @@ class TLSTicketKeyManager {
   /**
    * Derive a unique key from the parent key and the salt via hashing
    */
-  void makeUniqueKeys(unsigned char* parentKey, size_t keyLen,
-                      unsigned char* salt, unsigned char* output);
+  void makeUniqueKeys(
+      unsigned char* parentKey,
+      size_t keyLen,
+      unsigned char* salt,
+      unsigned char* output);
 
   typedef std::vector<std::unique_ptr<TLSTicketSeed>> TLSTicketSeedList;
-  typedef std::map<std::string, std::unique_ptr<TLSTicketKeySource> >
-    TLSTicketKeyMap;
-  typedef std::vector<TLSTicketKeySource *> TLSActiveKeyList;
+  using TLSTicketKeyMap =
+      std::map<std::string, std::unique_ptr<TLSTicketKeySource>>;
+  using TLSActiveKeyList = std::vector<TLSTicketKeySource*>;
 
   TLSTicketSeedList ticketSeeds_;
   // All key sources that can be used for decryption
@@ -217,11 +204,7 @@ class TLSTicketKeyManager {
   // Key sources that can be used for encryption
   TLSActiveKeyList activeKeys_;
 
-  folly::SSLContext* ctx_;
   SSLStats* stats_{nullptr};
-
-  static int32_t sExDataIndex_;
 };
-#endif
-
+using TicketSeedHandler = TLSTicketKeyManager;
 } // namespace wangle

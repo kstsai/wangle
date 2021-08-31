@@ -1,11 +1,11 @@
 /*
- * Copyright 2017-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #pragma once
 
 #include <folly/Optional.h>
@@ -21,6 +22,7 @@
 #include <set>
 #include <string>
 #include <vector>
+
 
 /**
  * SSLContextConfig helps to describe the configs/options for
@@ -37,21 +39,29 @@ namespace wangle {
 
 struct SSLContextConfig {
   SSLContextConfig() = default;
-  ~SSLContextConfig() = default;
+  virtual ~SSLContextConfig() = default;
 
   struct CertificateInfo {
     CertificateInfo(const std::string& crtPath,
                     const std::string& kyPath,
                     const std::string& passwdPath)
         : certPath(crtPath), keyPath(kyPath), passwordPath(passwdPath) {}
+
+    CertificateInfo(const std::string& crtBuf,
+                    const std::string& kyBuf)
+        : certPath(crtBuf),
+          keyPath(kyBuf),
+          isBuffer(true) {}
+
     std::string certPath;
     std::string keyPath;
     std::string passwordPath;
+    bool isBuffer{false};
   };
 
   static const std::string& getDefaultCiphers() {
     static const std::string& defaultCiphers =
-        folly::join(':', folly::ssl::SSLServerOptions::kCipherList);
+        folly::join(':', folly::ssl::SSLServerOptions::ciphers());
     return defaultCiphers;
   }
 
@@ -60,8 +70,6 @@ struct SSLContextConfig {
     // Currently supported values: "rsa", "ec" (can also be empty)
     // Note that the corresponding thrift IDL has a list instead
     std::set<std::string> offloadType;
-    // Whether this set of keys need local fallback
-    bool localFallback{false};
     // An identifier for the service to which we are offloading.
     std::string serviceId{"default"};
     // Whether we want to offload certificates
@@ -71,17 +79,28 @@ struct SSLContextConfig {
   /**
    * Helpers to set/add a certificate
    */
-  void setCertificate(const std::string& certPath,
-                      const std::string& keyPath,
-                      const std::string& passwordPath) {
+  virtual void setCertificate(const std::string& certPath,
+                              const std::string& keyPath,
+                              const std::string& passwordPath) {
     certificates.clear();
     addCertificate(certPath, keyPath, passwordPath);
+  }
+
+  void setCertificateBuf(const std::string& cert,
+                         const std::string& key) {
+    certificates.clear();
+    addCertificateBuf(cert, key);
   }
 
   void addCertificate(const std::string& certPath,
                       const std::string& keyPath,
                       const std::string& passwordPath) {
     certificates.emplace_back(certPath, keyPath, passwordPath);
+  }
+
+  void addCertificateBuf(const std::string& cert,
+                         const std::string& key) {
+    certificates.emplace_back(cert, key);
   }
 
   /**
@@ -97,10 +116,11 @@ struct SSLContextConfig {
 
   std::vector<CertificateInfo> certificates;
   folly::SSLContext::SSLVersion sslVersion{
-    folly::SSLContext::TLSv1};
+    folly::SSLContext::TLSv1_2};
   bool sessionCacheEnabled{true};
   bool sessionTicketEnabled{true};
   std::string sslCiphers{getDefaultCiphers()};
+  folly::Optional<std::string> sigAlgs;
   std::string eccCurveName{"prime256v1"};
 
   // Weighted lists of NPN strings to advertise
@@ -111,16 +131,26 @@ struct SSLContextConfig {
   bool isDefault{false};
   // File containing trusted CA's to validate client certificates
   std::string clientCAFile;
+
   // Verification method to use for client certificates.
-  folly::SSLContext::SSLVerifyPeerEnum clientVerification{
-    folly::SSLContext::SSLVerifyPeerEnum::VERIFY_REQ_CLIENT_CERT};
+  folly::SSLContext::VerifyClientCertificate clientVerification{
+    folly::SSLContext::VerifyClientCertificate::ALWAYS};
+
   // Key offload configuration
   KeyOffloadParams keyOffloadParams;
+
+  // If true, read cert-key files locally. Otherwise, fetch them from cryptossl
+  bool offloadDisabled{true};
+
+  // Load cert-key pairs corresponding to these domains
+  std::vector<std::string> domains;
+
   // A namespace to use for sessions generated from this context so that
   // they will not be shared between other sessions generated from the
-  // same context. If not specified the common name for the certificates set
-  // in the context will be used by default.
+  // same context. If not specified the vip name will be used by default
   folly::Optional<std::string> sessionContext;
+
+  bool alpnAllowMismatch{true};
 };
 
 } // namespace wangle

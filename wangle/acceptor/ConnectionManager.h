@@ -1,11 +1,11 @@
 /*
- * Copyright 2017-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #pragma once
 
 #include <wangle/acceptor/ManagedConnection.h>
@@ -138,16 +139,18 @@ class ConnectionManager: public folly::DelayedDestruction,
   size_t getNumConnections() const { return conns_.size(); }
 
   template <typename F>
-  void iterateConns(F func) {
-    auto it = conns_.begin();
-    while ( it != conns_.end()) {
-      func(&(*it));
-      it++;
+  void forEachConnection(F func) {
+    for (auto& connection : conns_) {
+      func(&connection);
     }
   }
 
   std::chrono::milliseconds getDefaultTimeout() const {
     return timeout_;
+  }
+
+  std::chrono::milliseconds getIdleConnEarlyDropThreshold() const {
+    return idleConnEarlyDropThreshold_;
   }
 
   void setLoweredIdleTimeout(std::chrono::milliseconds timeout) {

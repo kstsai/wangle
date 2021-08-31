@@ -1,11 +1,11 @@
 /*
- * Copyright 2017-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #pragma once
 
 #include <wangle/acceptor/SecureTransportType.h>
@@ -32,24 +33,6 @@ class AsyncSocket;
 }
 
 namespace wangle {
-
-/**
- * A structure that encapsulates byte counters related to the HTTP headers.
- */
-struct HTTPHeaderSize {
-  /**
-   * The number of bytes used to represent the header after compression or
-   * before decompression. If header compression is not supported, the value
-   * is set to 0.
-   */
-  size_t compressed{0};
-
-  /**
-   * The number of bytes used to represent the serialized header before
-   * compression or after decompression, in plain-text format.
-   */
-  size_t uncompressed{0};
-};
 
 /**
  * A struct that can store additional information specific to the protocol being
@@ -99,6 +82,11 @@ struct TransportInfo {
    * The congestion window size in bytes
    */
   int64_t cwndBytes{-1};
+
+  /*
+   * The receiver flow control window for the entire connection in bytes.
+   */
+  int64_t recvwnd{-1};
 
   /*
    * MSS
@@ -232,113 +220,6 @@ struct TransportInfo {
    */
   std::shared_ptr<folly::SocketAddress> clientAddrOriginal;
 
-  /**
-   * header bytes read
-   */
-  HTTPHeaderSize ingressHeader;
-
-  /*
-   * header bytes written
-   */
-  HTTPHeaderSize egressHeader;
-
-  /*
-   * Here is how the timeToXXXByte variables are planned out:
-   * 1. All timeToXXXByte variables are measuring the ByteEvent from reqStart_
-   * 2. You can get the timing between two ByteEvents by calculating their
-   *    differences. For example:
-   *    timeToLastBodyByteAck - timeToFirstByte
-   *    => Total time to deliver the body
-   * 3. The calculation in point (2) is typically done outside acceptor
-   *
-   * Future plan:
-   * We should log the timestamps (TimePoints) and allow
-   * the consumer to calculate the latency whatever it
-   * wants instead of calculating them in wangle, for the sake of flexibility.
-   * For example:
-   * 1. TimePoint reqStartTimestamp;
-   * 2. TimePoint firstHeaderByteSentTimestamp;
-   * 3. TimePoint firstBodyByteTimestamp;
-   * 3. TimePoint lastBodyByteTimestamp;
-   * 4. TimePoint lastBodyByteAckTimestamp;
-   */
-
-  /*
-   * time to first header byte written to the kernel send buffer
-   * NOTE: It is not 100% accurate since TAsyncSocket does not do
-   * do callback on partial write.
-   */
-  int32_t timeToFirstHeaderByte{-1};
-
-  /*
-   * time to first body byte written to the kernel send buffer
-   */
-  int32_t timeToFirstByte{-1};
-
-  /*
-   * time to last body byte written to the kernel send buffer
-   */
-  int32_t timeToLastByte{-1};
-
-  /*
-   * time to TCP Ack received for the last written body byte
-   */
-  int32_t timeToLastBodyByteAck{-1};
-
-  /*
-   * time it took the client to ACK the last byte, from the moment when the
-   * kernel sent the last byte to the client and until it received the ACK
-   * for that byte
-   */
-  int32_t lastByteAckLatency{-1};
-
-  /*
-   * time spent inside wangle
-   */
-  int32_t proxyLatency{-1};
-
-  /*
-   * time between connection accepted and client message headers completed
-   */
-  int32_t clientLatency{-1};
-
-  /*
-   * latency for communication with the server
-   */
-  int32_t serverLatency{-1};
-
-  /*
-   * time used to get a usable connection.
-   */
-  int32_t connectLatency{-1};
-
-  /*
-   * body bytes written
-   */
-  uint32_t egressBodySize{0};
-
-  /*
-   * session offset of first body byte.
-   *
-   * Protocols that support preemption and multiplexing (e.g., HTTP/2) may write
-   * multiple response body in parallel to the transport. Capturing the first
-   * and last body byte offsets enables examination of this multiplexing.
-   *
-   * The difference between these two offsets is also useful for measuring
-   * throughput as it provides the total number of bytes transferred via
-   * transport between the time the first byte of the response was flushed
-   * (timeToFirstByte) and when the ack was received for the last byte in the
-   * response (timeToLastBodyByteAck).
-   */
-  folly::Optional<uint64_t> maybeFirstBodyByteOffset;
-
-  /*
-   * session offset of last body byte.
-   *
-   * see maybeFirstBodyByteOffset
-   */
-  folly::Optional<uint64_t> maybeLastBodyByteOffset;
-
   /*
    * value of errno in case of getsockopt() error
    */
@@ -354,11 +235,6 @@ struct TransportInfo {
    * SSL error detail
    */
   std::string sslError;
-
-  /**
-   * body bytes read
-   */
-  uint32_t ingressBodySize{0};
 
   /*
    * The SSL version used by the transaction's transport, in
@@ -377,16 +253,16 @@ struct TransportInfo {
    */
   uint16_t sslCertSize{0};
 
-  /**
-   * response status code
-   */
-  uint16_t statusCode{0};
-
   /*
    * The SSL mode for the transaction's transport: new session,
    * resumed session, or neither (non-SSL).
    */
   SSLResumeEnum sslResume{SSLResumeEnum::NA};
+
+  /*
+   * time used to get a usable connection.
+   */
+  int32_t connectLatency{-1};
 
   /*
    * true if the tcpinfo was successfully read from the kernel
@@ -413,6 +289,12 @@ struct TransportInfo {
    * raw signature (that gives the hash).
    */
   std::shared_ptr<std::string> tcpSignature{nullptr};
+
+  /*
+   * Hash of some of TCP/IP headers fields (especially tcp_options) values,
+   * sometimes concatenated with raw fingerprint (that gives the hash).
+   */
+  std::shared_ptr<std::string> tcpFingerprint{nullptr};
 
   /*
    * Whether or not TCP fast open succeded on this connection. Failure can occur

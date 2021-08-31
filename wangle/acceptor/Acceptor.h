@@ -1,11 +1,11 @@
 /*
- * Copyright 2017-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,32 +13,32 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #pragma once
 
-#include <wangle/acceptor/ServerSocketConfig.h>
-#include <wangle/acceptor/ConnectionCounter.h>
 #include <wangle/acceptor/ConnectionManager.h>
+#include <wangle/acceptor/FizzAcceptorHandshakeHelper.h>
 #include <wangle/acceptor/LoadShedConfiguration.h>
+#include <wangle/acceptor/SSLAcceptorHandshakeHelper.h>
 #include <wangle/acceptor/SecureTransportType.h>
 #include <wangle/acceptor/SecurityProtocolContextManager.h>
-#include <wangle/acceptor/SSLAcceptorHandshakeHelper.h>
-#include <wangle/acceptor/FizzAcceptorHandshakeHelper.h>
+#include <wangle/acceptor/ServerSocketConfig.h>
 #include <wangle/acceptor/TLSPlaintextPeekingCallback.h>
 
-#include <wangle/ssl/SSLCacheProvider.h>
 #include <wangle/acceptor/TransportInfo.h>
+#include <wangle/ssl/SSLCacheProvider.h>
 #include <wangle/ssl/SSLStats.h>
 
-#include <chrono>
-#include <event.h>
 #include <folly/ExceptionWrapper.h>
+#include <folly/io/SocketOptionMap.h>
 #include <folly/io/async/AsyncSSLSocket.h>
 #include <folly/io/async/AsyncServerSocket.h>
 #include <folly/io/async/AsyncUDPServerSocket.h>
+#include <chrono>
 
 namespace wangle {
 
-class AsyncTransport;
+class AcceptObserver;
 class ManagedConnection;
 class SecurityProtocolContextManager;
 class SSLContextManager;
@@ -55,17 +55,15 @@ class SSLContextManager;
  * a new ManagedConnection object for each accepted socket.  The acceptor
  * also tracks all outstanding connections that it has accepted.
  */
-class Acceptor :
-  public folly::AsyncServerSocket::AcceptCallback,
-  public wangle::ConnectionManager::Callback,
-  public folly::AsyncUDPServerSocket::Callback  {
+class Acceptor : public folly::AsyncServerSocket::AcceptCallback,
+                 public wangle::ConnectionManager::Callback,
+                 public folly::AsyncUDPServerSocket::Callback {
  public:
-
   enum class State : uint32_t {
-    kInit,  // not yet started
+    kInit, // not yet started
     kRunning, // processing requests normally
     kDraining, // processing outstanding conns, but not accepting new ones
-    kDone,  // no longer accepting, and all connections finished
+    kDone, // no longer accepting, and all connections finished
   };
 
   explicit Acceptor(const ServerSocketConfig& accConfig);
@@ -81,20 +79,45 @@ class Acceptor :
   }
 
   /**
+   * Supply a fizz cert manager for use.
+   * If not set before init(), one will be created.
+   */
+  virtual void setFizzCertManager(
+      std::shared_ptr<fizz::server::CertManager> fizzCertManager) {
+    fizzCertManager_ = fizzCertManager;
+  }
+
+  /**
+   * Supply an SSLContextManager for use.
+   * If not set before init(), one will be created.
+   */
+  virtual void setSSLContextManager(
+      std::shared_ptr<SSLContextManager> contextManager) {
+    sslCtxManager_ = contextManager;
+  }
+
+  /**
    * Initialize the Acceptor to run in the specified EventBase
    * thread, receiving connections from the specified AsyncServerSocket.
    *
    * This method will be called from the AsyncServerSocket's primary thread,
    * not the specified EventBase thread.
    */
-  virtual void init(folly::AsyncServerSocket* serverSocket,
-                    folly::EventBase* eventBase,
-                    SSLStats* stats = nullptr);
+  virtual void init(
+      folly::AsyncServerSocket* serverSocket,
+      folly::EventBase* eventBase,
+      SSLStats* stats = nullptr,
+      std::shared_ptr<const fizz::server::FizzServerContext> fizzContext =
+          nullptr);
 
   /**
    * Recreates ssl configs, re-reads certs
    */
-  virtual void resetSSLContextConfigs();
+  virtual void resetSSLContextConfigs(
+      std::shared_ptr<fizz::server::CertManager> certManager = nullptr,
+      std::shared_ptr<SSLContextManager> ctxManager = nullptr,
+      std::shared_ptr<const fizz::server::FizzServerContext> fizzContext =
+          nullptr);
 
   SSLContextManager* getSSLContextManager() const {
     return sslCtxManager_.get();
@@ -112,14 +135,17 @@ class Acceptor :
    * Return the number of outstanding connections in this service instance.
    */
   uint32_t getNumConnections() const {
-    return downstreamConnectionManager_ ?
-      (uint32_t)downstreamConnectionManager_->getNumConnections() : 0;
+    return downstreamConnectionManager_
+        ? (uint32_t)downstreamConnectionManager_->getNumConnections()
+        : 0;
   }
 
   /**
    * Access the Acceptor's event base.
    */
-  virtual folly::EventBase* getEventBase() const { return base_; }
+  virtual folly::EventBase* getEventBase() const {
+    return base_;
+  }
 
   /**
    * Access the Acceptor's downstream (client-side) ConnectionManager
@@ -187,12 +213,12 @@ class Acceptor :
    */
   virtual void forceStop();
 
-  bool isSSL() const { return accConfig_.isSSL(); }
+  bool isSSL() const {
+    return accConfig_.isSSL();
+  }
 
-  const ServerSocketConfig& getConfig() const { return accConfig_; }
-
-  static uint64_t getTotalNumPendingSSLConns() {
-    return totalNumPendingSSLConns_.load();
+  const ServerSocketConfig& getConfig() const {
+    return accConfig_;
   }
 
   /**
@@ -200,30 +226,28 @@ class Acceptor :
    * the first HTTP bytes (HTTP) or the SSL handshake (HTTPS)
    */
   virtual void onDoneAcceptingConnection(
-    int fd,
-    const folly::SocketAddress& clientAddr,
-    std::chrono::steady_clock::time_point acceptTime
-  ) noexcept;
+      int fd,
+      const folly::SocketAddress& clientAddr,
+      std::chrono::steady_clock::time_point acceptTime) noexcept;
 
   /**
    * Begins either processing HTTP bytes (HTTP) or the SSL handshake (HTTPS)
    */
   void processEstablishedConnection(
-    int fd,
-    const folly::SocketAddress& clientAddr,
-    std::chrono::steady_clock::time_point acceptTime,
-    TransportInfo& tinfo
-  ) noexcept;
+      int fd,
+      const folly::SocketAddress& clientAddr,
+      std::chrono::steady_clock::time_point acceptTime,
+      TransportInfo& tinfo) noexcept;
 
   /**
    * Creates and starts the handshake manager.
    */
   virtual void startHandshakeManager(
-    folly::AsyncSSLSocket::UniquePtr sslSock,
-    Acceptor* acceptor,
-    const folly::SocketAddress& clientAddr,
-    std::chrono::steady_clock::time_point acceptTime,
-    TransportInfo& tinfo) noexcept;
+      folly::AsyncSSLSocket::UniquePtr sslSock,
+      Acceptor* acceptor,
+      const folly::SocketAddress& clientAddr,
+      std::chrono::steady_clock::time_point acceptTime,
+      TransportInfo& tinfo) noexcept;
 
   /**
    * Drains all open connections of their outstanding transactions. When
@@ -257,11 +281,9 @@ class Acceptor :
    * Wrapper for connectionReady() that can be overridden by
    * subclasses to deal with plaintext connections.
    */
-   virtual void plaintextConnectionReady(
-      folly::AsyncTransportWrapper::UniquePtr sock,
+  virtual void plaintextConnectionReady(
+      folly::AsyncSocket::UniquePtr sock,
       const folly::SocketAddress& clientAddr,
-      const std::string& nextProtocolName,
-      SecureTransportType secureTransportType,
       TransportInfo& tinfo);
 
   /**
@@ -270,8 +292,8 @@ class Acceptor :
    * connections and upon completion of SSL handshaking or resumption
    * for SSL connections.
    */
-   void connectionReady(
-      folly::AsyncTransportWrapper::UniquePtr sock,
+  void connectionReady(
+      folly::AsyncTransport::UniquePtr sock,
       const folly::SocketAddress& clientAddr,
       const std::string& nextProtocolName,
       SecureTransportType secureTransportType,
@@ -281,7 +303,8 @@ class Acceptor :
    * Wrapper for connectionReady() that decrements the count of
    * pending SSL connections. This should normally not be overridden.
    */
-  virtual void sslConnectionReady(folly::AsyncTransportWrapper::UniquePtr sock,
+  virtual void sslConnectionReady(
+      folly::AsyncTransport::UniquePtr sock,
       const folly::SocketAddress& clientAddr,
       const std::string& nextProtocol,
       SecureTransportType secureTransportType,
@@ -298,11 +321,43 @@ class Acceptor :
    * sock may be nullptr.
    */
   virtual void updateSSLStats(
-      const folly::AsyncTransportWrapper* /*sock*/,
+      const folly::AsyncTransport* /*sock*/,
       std::chrono::milliseconds /*acceptLatency*/,
-      SSLErrorEnum /*error*/) noexcept {}
+      SSLErrorEnum /*error*/,
+      const folly::exception_wrapper& /*ex*/) noexcept {}
+
+  /**
+   * Adds observer for accept events.
+   *
+   * Can be used to install socket observers and instrumentation without
+   * changing / interfering with application-specific acceptor logic.
+   *
+   * @param observer     Observer to add (implements AcceptObserver).
+   */
+  virtual void addAcceptObserver(AcceptObserver* observer) {
+    observerList_.add(observer);
+  }
+
+  /**
+   * Remove observer for accept events.
+   *
+   * @param observer     Observer to remove.
+   * @return             Whether observer found and removed from list.
+   */
+  virtual bool removeAcceptObserver(AcceptObserver* observer) {
+    return observerList_.remove(observer);
+  }
+
+  /**
+   * Create a FizzServerContext from the TLS settings presently in this
+   * Acceptor.  This context is a suitable starting point for enabling QUIC
+   * via mvfst.
+   */
+  std::shared_ptr<fizz::server::FizzServerContext> recreateFizzContext();
 
  protected:
+  using OnDataAvailableParams =
+      folly::AsyncUDPSocket::ReadCallback::OnDataAvailableParams;
 
   /**
    * Our event loop.
@@ -312,12 +367,6 @@ class Acceptor :
    * things w/ the event loop (e.g. in attach()).
    */
   folly::EventBase* base_{nullptr};
-
-  virtual uint64_t getConnectionCountForLoadShedding(void) const { return 0; }
-  virtual uint64_t getActiveConnectionCountForLoadShedding() const { return 0; }
-  virtual uint64_t getWorkerMaxConnections() const {
-    return connectionCounter_->getMaxConnections();
-  }
 
   /**
    * Hook for subclasses to drop newly accepted connections prior
@@ -343,7 +392,7 @@ class Acceptor :
    *                            requested by the client.
    */
   virtual void onNewConnection(
-      folly::AsyncTransportWrapper::UniquePtr /*sock*/,
+      folly::AsyncTransport::UniquePtr /*sock*/,
       const folly::SocketAddress* /*address*/,
       const std::string& /*nextProtocolName*/,
       SecureTransportType /*secureTransportType*/,
@@ -355,26 +404,31 @@ class Acceptor :
       std::shared_ptr<folly::AsyncUDPSocket> /*socket*/,
       const folly::SocketAddress&,
       std::unique_ptr<folly::IOBuf>,
-      bool) noexcept override {}
+      bool,
+      OnDataAvailableParams) noexcept override {}
 
   virtual folly::AsyncSocket::UniquePtr makeNewAsyncSocket(
       folly::EventBase* base,
-      int fd) {
+      int fd,
+      const folly::SocketAddress* peerAddress) {
     return folly::AsyncSocket::UniquePtr(
-        new folly::AsyncSocket(base, folly::NetworkSocket::fromFd(fd)));
+        new folly::AsyncSocket(
+            base, folly::NetworkSocket::fromFd(fd), 0, peerAddress));
   }
 
   virtual folly::AsyncSSLSocket::UniquePtr makeNewAsyncSSLSocket(
-    const std::shared_ptr<folly::SSLContext>& ctx, folly::EventBase* base, int fd) {
+      const std::shared_ptr<folly::SSLContext>& ctx,
+      folly::EventBase* base,
+      int fd,
+      const folly::SocketAddress* peerAddress) {
     return folly::AsyncSSLSocket::UniquePtr(new folly::AsyncSSLSocket(
         ctx,
         base,
         folly::NetworkSocket::fromFd(fd),
         true, /* set server */
-        true /* defer the security negotiation until sslAccept */));
+        true /* defer the security negotiation until sslAccept */,
+        peerAddress));
   }
-
- protected:
 
   /**
    * onConnectionsDrained() will be called once all connections have been
@@ -389,6 +443,9 @@ class Acceptor :
   void connectionAccepted(
       folly::NetworkSocket fdNetworkSocket,
       const folly::SocketAddress& clientAddr) noexcept override;
+  // TODO(T81599451): Remove the 'using' statement below after
+  // eliminating the old AcceptCallback::acceptError callback
+  using folly::AsyncServerSocket::AcceptCallback::acceptError;
   void acceptError(const std::exception& ex) noexcept override;
   void acceptStopped() noexcept override;
 
@@ -397,11 +454,7 @@ class Acceptor :
   void onConnectionAdded(const ManagedConnection*) override {}
   void onConnectionRemoved(const ManagedConnection*) override {}
 
- protected:
   const ServerSocketConfig accConfig_;
-  void setLoadShedConfig(
-    std::shared_ptr<const LoadShedConfiguration> loadShedConfig,
-    const IConnectionCounter* counter);
 
   // Helper function to initialize downstreamConnectionManager_
   virtual void initDownstreamConnectionManager(folly::EventBase* eventBase);
@@ -411,17 +464,19 @@ class Acceptor :
   }
   virtual std::shared_ptr<fizz::server::FizzServerContext> createFizzContext();
   virtual std::shared_ptr<fizz::server::TicketCipher> createFizzTicketCipher(
-    const TLSTicketKeySeeds& seeds,
-    folly::Optional<std::string> pskContext = folly::none);
+      const TLSTicketKeySeeds& seeds,
+      std::shared_ptr<fizz::Factory> factory,
+      std::shared_ptr<fizz::server::CertManager> certManager,
+      folly::Optional<std::string> pskContext);
 
   virtual std::unique_ptr<fizz::server::CertManager> createFizzCertManager();
 
   /**
    * Socket options to apply to the client socket
    */
-  folly::AsyncSocket::OptionMap socketOptions_;
+  folly::SocketOptionMap socketOptions_;
 
-  std::unique_ptr<SSLContextManager> sslCtxManager_;
+  std::shared_ptr<SSLContextManager> sslCtxManager_;
 
   /**
    * Stores peekers for different security protocols.
@@ -435,28 +490,57 @@ class Acceptor :
   wangle::ConnectionManager::UniquePtr downstreamConnectionManager_;
 
   std::shared_ptr<SSLCacheProvider> cacheProvider_;
-  std::shared_ptr<fizz::server::TicketCipher> fizzTicketCipher_{nullptr};
-  std::shared_ptr<fizz::server::CertManager> fizzCertManager_{nullptr};
 
  private:
+  TLSTicketKeySeeds ticketSecrets_;
+  std::shared_ptr<fizz::server::CertManager> fizzCertManager_{nullptr};
 
   // Forbidden copy constructor and assignment opererator
-  Acceptor(Acceptor const &) = delete;
-  Acceptor& operator=(Acceptor const &) = delete;
+  Acceptor(Acceptor const&) = delete;
+  Acceptor& operator=(Acceptor const&) = delete;
 
   void checkDrained();
 
   State state_{State::kInit};
   uint64_t numPendingSSLConns_{0};
 
-  static std::atomic<uint64_t> totalNumPendingSSLConns_;
-
   bool forceShutdownInProgress_{false};
-  std::shared_ptr<const LoadShedConfiguration> loadShedConfig_{nullptr};
-  const IConnectionCounter* connectionCounter_{nullptr};
   std::chrono::milliseconds gracefulShutdownTimeout_{5000};
 
-  std::shared_ptr<const fizz::server::FizzServerContext> recreateFizzContext();
+  // Wrapper around list of AcceptObservers to handle cleanup on destruction
+  class AcceptObserverList {
+   public:
+    explicit AcceptObserverList(Acceptor* acceptor);
+
+    /**
+     * Destructor, triggers observerDetach for any attached observers.
+     */
+    ~AcceptObserverList();
+
+    /**
+     * Add observer and trigger observerAttach.
+     */
+    void add(AcceptObserver* observer);
+
+    /**
+     * Remove observer and trigger observerDetach.
+     */
+    bool remove(AcceptObserver* observer);
+
+    /**
+     * Get reference to vector containing observers.
+     */
+    const std::vector<AcceptObserver*>& getAll() const {
+      return observers_;
+    }
+
+   private:
+    Acceptor* acceptor_{nullptr};
+    std::vector<AcceptObserver*> observers_;
+  };
+
+  // List of AcceptObservers
+  AcceptObserverList observerList_;
 };
 
 class AcceptorFactory {
@@ -465,4 +549,4 @@ class AcceptorFactory {
   virtual ~AcceptorFactory() = default;
 };
 
-} // namespace
+} // namespace wangle

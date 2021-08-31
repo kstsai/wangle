@@ -1,11 +1,11 @@
 /*
- * Copyright 2017-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 #include <chrono>
 #include <thread>
 #include <vector>
@@ -80,7 +81,7 @@ class MockPersistenceLayer : public TestPersistenceLayer {
     bool persist(const dynamic& obj) noexcept override {
       return persist_(obj);
     }
-    Optional<dynamic> load() noexcept override {
+    folly::Optional<dynamic> load() noexcept override {
       return load_();
     }
     CacheDataVersion getLastPersistedVersionConcrete() const {
@@ -91,7 +92,7 @@ class MockPersistenceLayer : public TestPersistenceLayer {
     }
     MOCK_METHOD0(clear, void());
     MOCK_METHOD1(persist_, bool(const dynamic&));
-    MOCK_METHOD0(load_, Optional<dynamic>());
+    MOCK_METHOD0(load_, folly::Optional<dynamic>());
     MOCK_CONST_METHOD0(getLastPersistedVersion, CacheDataVersion());
     GMOCK_METHOD1_(, noexcept, , setPersistedVersion, void(CacheDataVersion));
 };
@@ -153,11 +154,7 @@ TYPED_TEST(LRUPersistentCacheTest, SettingPersistenceFromCtor) {
 
 TYPED_TEST(LRUPersistentCacheTest, SyncOnDestroy) {
   auto persistence = this->persistence.get();
-  auto cache = createCacheWithExecutor<TypeParam>(
-      this->manualExecutor,
-      std::move(this->persistence),
-      std::chrono::milliseconds::zero(),
-      0);
+  auto cache = createCache<TypeParam>(10, 10, std::move(this->persistence));
   cache->init();
   cache->put("k0", "v0");
   EXPECT_CALL(*persistence, persist_(_))
@@ -274,7 +271,6 @@ TYPED_TEST(LRUPersistentCacheTest, ExecutorCacheRunTaskInline) {
       std::chrono::milliseconds::zero(),
       1);
   cache->init();
-  this->manualExecutor->run();
   EXPECT_CALL(*rawPersistence, getLastPersistedVersion())
       .Times(1)
       .WillOnce(Invoke(
@@ -507,4 +503,46 @@ TYPED_TEST(LRUPersistentCacheTest, EmptyPersistenceMatchesEmptyCache) {
 
   cache->put("k0", "v0");
   EXPECT_TRUE(cache->hasPendingUpdates());
+}
+
+TYPED_TEST(LRUPersistentCacheTest, ZeroSyncIntervalSyncsImmediately) {
+  EXPECT_CALL(*this->persistence, load_())
+      .Times(1)
+      .WillOnce(Return(dynamic::array()));
+  auto rawPersistence = this->persistence.get();
+  auto cache = createCacheWithExecutor<TypeParam>(
+      this->manualExecutor,
+      std::move(this->persistence),
+      std::chrono::milliseconds::zero(),
+      1,
+      true);
+  cache->init();
+  this->manualExecutor->run();
+  EXPECT_CALL(*rawPersistence, getLastPersistedVersion())
+      .WillRepeatedly(Invoke(
+          rawPersistence,
+          &MockPersistenceLayer::getLastPersistedVersionConcrete));
+
+  cache->put("k0", "v0");
+  EXPECT_CALL(*rawPersistence, persist_(DynSize(1)))
+      .Times(1)
+      .WillOnce(Return(true));
+  this->manualExecutor->run();
+
+  // The following put will trigger a sync because syncImmediatelyWithExecutor
+  // is set to true
+  EXPECT_CALL(*rawPersistence, getLastPersistedVersion())
+      .WillRepeatedly(Invoke(
+          rawPersistence,
+          &MockPersistenceLayer::getLastPersistedVersionConcrete));
+  EXPECT_CALL(*rawPersistence, persist_(DynSize(2)))
+      .Times(1)
+      .WillOnce(Return(true));
+  cache->put("k1", "v1");
+  this->manualExecutor->run();
+
+  EXPECT_CALL(*rawPersistence, persist_(_)).Times(0);
+  cache.reset();
+  // Nothing more should happen after this
+  this->manualExecutor->drain();
 }

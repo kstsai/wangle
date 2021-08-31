@@ -1,11 +1,11 @@
 /*
- * Copyright 2017-present Facebook, Inc.
+ * Copyright (c) Facebook, Inc. and its affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *   http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -605,4 +605,38 @@ TEST(LineBasedFrameDecoder, CarriageNewLineOnly) {
   q.append(std::move(buf));
   pipeline->read(q);
   EXPECT_EQ(called, 1);
+}
+
+TEST(LineBasedFrameDecoder, CarriageOnly) {
+  auto pipeline = Pipeline<IOBufQueue&, std::unique_ptr<IOBuf>>::create();
+
+  (*pipeline)
+      .addBack(LineBasedFrameDecoder(
+          10, true, LineBasedFrameDecoder::TerminatorType::CARRIAGENEWLINE))
+      .addBack(test::FrameTester([&](std::unique_ptr<IOBuf>) { FAIL(); }))
+      .finalize();
+
+  IOBufQueue q(IOBufQueue::cacheChainLength());
+  q.append(IOBuf::copyBuffer("\raa"));
+  pipeline->read(q);
+}
+
+TEST(LineBasedFrameDecoder, DoubleCarriage) {
+  auto pipeline = Pipeline<IOBufQueue&, std::unique_ptr<IOBuf>>::create();
+  int called = 0;
+
+  (*pipeline)
+      .addBack(LineBasedFrameDecoder(
+          10, true, LineBasedFrameDecoder::TerminatorType::CARRIAGENEWLINE))
+      .addBack(test::FrameTester([&](std::unique_ptr<IOBuf> buf) {
+        auto sz = buf->computeChainDataLength();
+        called++;
+        EXPECT_EQ(sz, 1);
+      }))
+      .finalize();
+
+  IOBufQueue q(IOBufQueue::cacheChainLength());
+  q.append(IOBuf::copyBuffer("\r\r\na\r\n"));
+  pipeline->read(q);
+  EXPECT_EQ(called, 2);
 }
