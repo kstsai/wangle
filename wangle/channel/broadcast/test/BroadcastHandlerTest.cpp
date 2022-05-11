@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,8 +26,9 @@ class BroadcastHandlerTest : public Test {
   class MockBroadcastHandler
       : public BroadcastHandler<std::string, std::string> {
    public:
-    MOCK_METHOD1(mockClose,
-                 folly::MoveWrapper<folly::Future<folly::Unit>>(Context*));
+    MOCK_METHOD1(
+        mockClose,
+        folly::MoveWrapper<folly::Future<folly::Unit>>(Context*));
 
     folly::Future<folly::Unit> close(Context* ctx) override {
       return mockClose(ctx).move();
@@ -101,10 +102,10 @@ TEST_F(BroadcastHandlerTest, SubscribeUnsubscribe) {
   IOBufQueue q;
   q.append(IOBuf::copyBuffer("data1"));
   pipeline->read(q);
-  q.clear();
+  q.reset();
   q.append(IOBuf::copyBuffer("data2"));
   pipeline->read(q);
-  q.clear();
+  q.reset();
 
   // Add another subscriber
   EXPECT_EQ(handler->subscribe(&subscriber1), 1);
@@ -115,7 +116,7 @@ TEST_F(BroadcastHandlerTest, SubscribeUnsubscribe) {
   // Push more data
   q.append(IOBuf::copyBuffer("data3"));
   pipeline->read(q);
-  q.clear();
+  q.reset();
 
   // Unsubscribe one of the subscribers
   handler->unsubscribe(0);
@@ -125,13 +126,12 @@ TEST_F(BroadcastHandlerTest, SubscribeUnsubscribe) {
   // Push more data
   q.append(IOBuf::copyBuffer("data4"));
   pipeline->read(q);
-  q.clear();
+  q.reset();
 
-  EXPECT_CALL(*handler, mockClose(_))
-      .WillOnce(InvokeWithoutArgs([this] {
-        pipeline.reset();
-        return makeMoveWrapper(makeFuture());
-      }));
+  EXPECT_CALL(*handler, mockClose(_)).WillOnce(InvokeWithoutArgs([this] {
+    pipeline.reset();
+    return makeMoveWrapper(makeFuture());
+  }));
 
   // Unsubscribe the other subscriber. The handler should be deleted now.
   handler->unsubscribe(1);
@@ -168,18 +168,18 @@ TEST_F(BroadcastHandlerTest, BufferedRead) {
   IOBufQueue q;
   q.append(IOBuf::copyBuffer("da"));
   pipeline->read(q);
-  q.clear();
+  q.reset();
   q.append(IOBuf::copyBuffer("ta1"));
   pipeline->read(q);
-  q.clear();
+  q.reset();
 
   // Push more fragmented data. onNext shouldn't be called yet.
   q.append(IOBuf::copyBuffer("dat"));
   pipeline->read(q);
-  q.clear();
+  q.reset();
   q.append(IOBuf::copyBuffer("a"));
   pipeline->read(q);
-  q.clear();
+  q.reset();
 
   // Add another subscriber
   EXPECT_EQ(handler->subscribe(&subscriber1), 1);
@@ -191,7 +191,7 @@ TEST_F(BroadcastHandlerTest, BufferedRead) {
   // to both subscribers.
   q.append(IOBuf::copyBuffer("3data4"));
   pipeline->read(q);
-  q.clear();
+  q.reset();
 
   EXPECT_CALL(subscriber0, onNext("data2")).Times(1);
   EXPECT_CALL(subscriber1, onNext("data2")).Times(1);
@@ -199,13 +199,12 @@ TEST_F(BroadcastHandlerTest, BufferedRead) {
   // Push some unfragmented data
   q.append(IOBuf::copyBuffer("data2"));
   pipeline->read(q);
-  q.clear();
+  q.reset();
 
-  EXPECT_CALL(*handler, mockClose(_))
-      .WillOnce(InvokeWithoutArgs([this] {
-        pipeline.reset();
-        return makeMoveWrapper(makeFuture());
-      }));
+  EXPECT_CALL(*handler, mockClose(_)).WillOnce(InvokeWithoutArgs([this] {
+    pipeline.reset();
+    return makeMoveWrapper(makeFuture());
+  }));
 
   // Unsubscribe all subscribers. The handler should be deleted now.
   handler->unsubscribe(0);
@@ -240,7 +239,7 @@ TEST_F(BroadcastHandlerTest, OnCompleted) {
   IOBufQueue q;
   q.append(IOBuf::copyBuffer("data1"));
   pipeline->read(q);
-  q.clear();
+  q.reset();
 
   // Add another subscriber
   EXPECT_EQ(handler->subscribe(&subscriber1), 1);
@@ -251,18 +250,17 @@ TEST_F(BroadcastHandlerTest, OnCompleted) {
   // Push more data
   q.append(IOBuf::copyBuffer("data2"));
   pipeline->read(q);
-  q.clear();
+  q.reset();
 
   // Unsubscribe one of the subscribers
   handler->unsubscribe(0);
 
   EXPECT_CALL(subscriber1, onCompleted()).Times(1);
 
-  EXPECT_CALL(*handler, mockClose(_))
-      .WillOnce(InvokeWithoutArgs([this] {
-        pipeline.reset();
-        return makeMoveWrapper(makeFuture());
-      }));
+  EXPECT_CALL(*handler, mockClose(_)).WillOnce(InvokeWithoutArgs([this] {
+    pipeline.reset();
+    return makeMoveWrapper(makeFuture());
+  }));
 
   // The handler should be deleted now
   handler->readEOF(nullptr);
@@ -296,7 +294,7 @@ TEST_F(BroadcastHandlerTest, OnError) {
   IOBufQueue q;
   q.append(IOBuf::copyBuffer("data1"));
   pipeline->read(q);
-  q.clear();
+  q.reset();
 
   // Add another subscriber
   EXPECT_EQ(handler->subscribe(&subscriber1), 1);
@@ -307,16 +305,15 @@ TEST_F(BroadcastHandlerTest, OnError) {
   // Push more data
   q.append(IOBuf::copyBuffer("data2"));
   pipeline->read(q);
-  q.clear();
+  q.reset();
 
   EXPECT_CALL(subscriber0, onError(_)).Times(1);
   EXPECT_CALL(subscriber1, onError(_)).Times(1);
 
-  EXPECT_CALL(*handler, mockClose(_))
-      .WillOnce(InvokeWithoutArgs([this] {
-        pipeline.reset();
-        return makeMoveWrapper(makeFuture());
-      }));
+  EXPECT_CALL(*handler, mockClose(_)).WillOnce(InvokeWithoutArgs([this] {
+    pipeline.reset();
+    return makeMoveWrapper(makeFuture());
+  }));
 
   // The handler should be deleted now
   handler->readException(nullptr, make_exception_wrapper<std::exception>());

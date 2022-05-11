@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,12 +26,13 @@ namespace wangle {
  * A peeking callback that makes it convenient to create a server
  * that will accept both TLS and plaintext traffic.
  */
-class TLSPlaintextPeekingCallback :
-  public PeekingAcceptorHandshakeHelper::PeekCallback {
+class TLSPlaintextPeekingCallback
+    : public PeekingAcceptorHandshakeHelper::PeekCallback {
   enum { kPeekCount = 9 };
+
  public:
-  TLSPlaintextPeekingCallback():
-    PeekingAcceptorHandshakeHelper::PeekCallback(kPeekCount) {}
+  TLSPlaintextPeekingCallback()
+      : PeekingAcceptorHandshakeHelper::PeekCallback(kPeekCount) {}
 
   AcceptorHandshakeHelper::UniquePtr getHelper(
       const std::vector<uint8_t>& bytes,
@@ -43,4 +44,4 @@ class TLSPlaintextPeekingCallback :
   static bool looksLikeTLS(const std::vector<uint8_t>& peekBytes);
 };
 
-}
+} // namespace wangle

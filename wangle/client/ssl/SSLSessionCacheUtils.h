@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -36,4 +36,7 @@ SSL_SESSION* getSessionFromCacheData(const SSLSessionCacheData& data);
 // Internal links to SSL structs are not kept
 SSL_SESSION* cloneSSLSession(SSL_SESSION* toClone);
 
-}
+folly::Optional<std::string> getSessionPeerIdentities(SSL_SESSION* sess);
+bool setSessionPeerIdentities(SSL_SESSION* sess, const std::string& str);
+
+} // namespace wangle

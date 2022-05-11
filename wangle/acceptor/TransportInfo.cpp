@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -46,7 +46,11 @@ bool TransportInfo::initWithSocket(const folly::AsyncSocket* sock) {
   rtt = microseconds(tcpinfo.tcpi_rtt);
   rtt_var = tcpinfo.tcpi_rttvar;
   rto = tcpinfo.tcpi_rto;
+#ifdef __FreeBSD__
+  rtx_tm = tcpinfo.__tcpi_retransmits;
+#else
   rtx_tm = tcpinfo.tcpi_retransmits;
+#endif
   mss = tcpinfo.tcpi_snd_mss;
   cwnd = tcpinfo.tcpi_snd_cwnd;
   cwndBytes = cwnd * mss;
@@ -56,7 +60,7 @@ bool TransportInfo::initWithSocket(const folly::AsyncSocket* sock) {
   rtx = tcpinfo.tcpi_total_retrans;
 #else
   rtx = -1;
-#endif  // __GLIBC__ >= 2 && __GLIBC_MINOR__ >= 17
+#endif // __GLIBC__ >= 2 && __GLIBC_MINOR__ >= 17
   validTcpinfo = true;
 #else
   (sock); // unused
@@ -144,8 +148,9 @@ int64_t TransportInfo::readRTT(const folly::AsyncSocket* sock) {
 #endif
 
 #if defined(__linux__) || defined(__FreeBSD__) || defined(__APPLE__)
-bool TransportInfo::readTcpInfo(tcp_info* tcpinfo,
-                                const folly::AsyncSocket* sock) {
+bool TransportInfo::readTcpInfo(
+    tcp_info* tcpinfo,
+    const folly::AsyncSocket* sock) {
   socklen_t len = sizeof(tcp_info);
   if (!sock) {
     return false;

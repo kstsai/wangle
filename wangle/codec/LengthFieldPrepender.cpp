@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,8 +17,8 @@
 #include <wangle/codec/LengthFieldPrepender.h>
 
 using folly::Future;
-using folly::Unit;
 using folly::IOBuf;
+using folly::Unit;
 
 namespace wangle {
 
@@ -27,18 +27,18 @@ LengthFieldPrepender::LengthFieldPrepender(
     int lengthAdjustment,
     bool lengthIncludesLengthField,
     bool networkByteOrder)
-    : lengthFieldLength_(lengthFieldLength)
-    , lengthAdjustment_(lengthAdjustment)
-    , lengthIncludesLengthField_(lengthIncludesLengthField)
-    , networkByteOrder_(networkByteOrder) {
-    CHECK(lengthFieldLength == 1 ||
-          lengthFieldLength == 2 ||
-          lengthFieldLength == 4 ||
-          lengthFieldLength == 8 );
-  }
+    : lengthFieldLength_(lengthFieldLength),
+      lengthAdjustment_(lengthAdjustment),
+      lengthIncludesLengthField_(lengthIncludesLengthField),
+      networkByteOrder_(networkByteOrder) {
+  CHECK(
+      lengthFieldLength == 1 || lengthFieldLength == 2 ||
+      lengthFieldLength == 4 || lengthFieldLength == 8);
+}
 
 Future<Unit> LengthFieldPrepender::write(
-    Context* ctx, std::unique_ptr<IOBuf> buf) {
+    Context* ctx,
+    std::unique_ptr<IOBuf> buf) {
   size_t length = lengthAdjustment_ + buf->computeChainDataLength();
   if (lengthIncludesLengthField_) {
     length += lengthFieldLength_;
@@ -99,6 +99,5 @@ Future<Unit> LengthFieldPrepender::write(
   len->prependChain(std::move(buf));
   return ctx->fireWrite(std::move(len));
 }
-
 
 } // namespace wangle

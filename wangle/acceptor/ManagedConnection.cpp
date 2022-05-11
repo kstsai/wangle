@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,9 +20,7 @@
 
 namespace wangle {
 
-ManagedConnection::ManagedConnection()
-  : connectionManager_(nullptr) {
-}
+ManagedConnection::ManagedConnection() : connectionManager_(nullptr) {}
 
 ManagedConnection::~ManagedConnection() {
   if (connectionManager_) {
@@ -30,35 +28,45 @@ ManagedConnection::~ManagedConnection() {
   }
 }
 
-void
-ManagedConnection::resetTimeout() {
+void ManagedConnection::resetTimeout() {
   if (connectionManager_) {
     resetTimeoutTo(connectionManager_->getDefaultTimeout());
   }
 }
 
-void
-ManagedConnection::resetTimeoutTo(std::chrono::milliseconds timeout) {
+void ManagedConnection::resetTimeoutTo(std::chrono::milliseconds timeout) {
   if (connectionManager_) {
     connectionManager_->scheduleTimeout(this, timeout);
   }
 }
 
-void
-ManagedConnection::scheduleTimeout(
-  folly::HHWheelTimer::Callback* callback,
+void ManagedConnection::scheduleTimeout(
+    folly::HHWheelTimer::Callback* callback,
     std::chrono::milliseconds timeout) {
   if (connectionManager_) {
     connectionManager_->scheduleTimeout(callback, timeout);
   }
 }
 
+void ManagedConnection::reportActivity() {
+  latestActivity_ = std::chrono::steady_clock::now();
+}
+
+folly::Optional<std::chrono::milliseconds>
+ManagedConnection::getLastActivityElapsedTime() const {
+  if (latestActivity_) {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - *latestActivity_);
+  } else {
+    return folly::none;
+  }
+}
+
 ////////////////////// Globals /////////////////////
 
-std::ostream&
-operator<<(std::ostream& os, const ManagedConnection& conn) {
+std::ostream& operator<<(std::ostream& os, const ManagedConnection& conn) {
   conn.describe(os);
   return os;
 }
 
-} // wangle
+} // namespace wangle

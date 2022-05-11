@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,9 +16,9 @@
 
 #include <wangle/acceptor/ConnectionManager.h>
 
-#include <folly/portability/GTest.h>
-#include <folly/portability/GMock.h>
 #include <folly/portability/GFlags.h>
+#include <folly/portability/GMock.h>
+#include <folly/portability/GTest.h>
 
 using namespace testing;
 using namespace wangle;
@@ -29,25 +29,22 @@ class ConnectionManagerTest;
 
 class MockConnection : public ManagedConnection {
  public:
-  using UniquePtr = std::unique_ptr<StrictMock<MockConnection>,
-                                    folly::DelayedDestruction::Destructor>;
+  using Mock = StrictMock<MockConnection>;
+  using UniquePtr = folly::DelayedDestructionUniquePtr<Mock>;
 
   static UniquePtr makeUnique(ConnectionManagerTest* test) {
     UniquePtr p(new StrictMock<MockConnection>(test));
     return p;
   }
 
-  explicit MockConnection(ConnectionManagerTest *test)
-      : test_(test) {
-    EXPECT_CALL(*this, isBusy())
-      .WillRepeatedly(Return(false));
+  explicit MockConnection(ConnectionManagerTest* test) : test_(test) {
+    EXPECT_CALL(*this, isBusy()).WillRepeatedly(Return(false));
     EXPECT_CALL(*this, dumpConnectionState(testing::_))
-      .WillRepeatedly(Return());
-    ON_CALL(*this, closeWhenIdle())
-      .WillByDefault(Invoke([this] {
-            closeWhenIdle_ = true;
-            closeWhenIdleImpl();
-          }));
+        .WillRepeatedly(Return());
+    ON_CALL(*this, closeWhenIdle()).WillByDefault(Invoke([this] {
+      closeWhenIdle_ = true;
+      closeWhenIdleImpl();
+    }));
   }
 
   MOCK_METHOD0(timeoutExpired_, void());
@@ -60,6 +57,9 @@ class MockConnection : public ManagedConnection {
   MOCK_CONST_METHOD0(isBusy, bool());
 
   MOCK_CONST_METHOD0(getIdleTime, std::chrono::milliseconds());
+  MOCK_CONST_METHOD0(
+      getLastActivityElapsedTime,
+      folly::Optional<std::chrono::milliseconds>());
 
   MOCK_METHOD0(notifyPendingShutdown, void());
   MOCK_METHOD0(closeWhenIdle, void());
@@ -79,18 +79,15 @@ class MockConnection : public ManagedConnection {
   bool closeWhenIdle_{false};
 };
 
-class ConnectionManagerTest: public testing::Test {
-
+class ConnectionManagerTest : public testing::Test {
  public:
   ConnectionManagerTest() {
-    cm_= ConnectionManager::makeUnique(&eventBase_,
-                                       std::chrono::milliseconds(100),
-                                       nullptr);
+    cm_ = ConnectionManager::makeUnique(
+        &eventBase_, std::chrono::milliseconds(100), nullptr);
     addConns(65);
   }
 
-  void SetUp() override {
-  }
+  void SetUp() override {}
 
   void addConns(uint64_t n) {
     for (size_t i = 0; i < n; i++) {
@@ -153,13 +150,13 @@ TEST_F(ConnectionManagerTest, testRemoveDrainIterator) {
   auto conn65 = conns_[conns_.size() - 2].get();
   auto conn66 = conns_[conns_.size() - 1].get();
   eventBase_.runInLoop([&] {
-      // deactivate the drain iterator
-      cm_->onDeactivated(*conn65);
-      // remove the drain iterator
-      cm_->removeConnection(conn66);
-      // deactivate the new drain iterator, now it's the end of the list
-      cm_->onDeactivated(*conn65);
-    });
+    // deactivate the drain iterator
+    cm_->onDeactivated(*conn65);
+    // remove the drain iterator
+    cm_->removeConnection(conn66);
+    // deactivate the new drain iterator, now it's the end of the list
+    cm_->onDeactivated(*conn65);
+  });
   cm_->initiateGracefulShutdown(std::chrono::milliseconds(50));
   // Schedule a loop callback to remove the connection pointed to by the drain
   // iterator
@@ -179,8 +176,10 @@ TEST_F(ConnectionManagerTest, testIdleGraceTimeout) {
   // I would prefer a non-sleep solution to this, but I can't think how to do it
   // without changing the class to expose internal details
   for (const auto& conn : conns_) {
-    EXPECT_CALL(*conn, notifyPendingShutdown())
-      .WillOnce(Invoke([] { /* sleep override */ usleep(1000); }));
+    EXPECT_CALL(*conn, notifyPendingShutdown()).WillOnce(Invoke([] {
+      /* sleep override */
+      usleep(1000);
+    }));
   }
   cm_->initiateGracefulShutdown(std::chrono::milliseconds(1));
   eventBase_.loopOnce();
@@ -230,7 +229,7 @@ TEST_F(ConnectionManagerTest, testDropPercent) {
   EXPECT_EQ(80, cm_->getNumConnections());
 
   // Then drop 50% of the remaining 80 connections.
-  pct  = 0.5;
+  pct = 0.5;
   numToDrop = 80 * pct;
   while (connIter != conns_.end() && numToDrop > 0) {
     EXPECT_CALL(*(*connIter), dropConnection(_));
@@ -285,14 +284,16 @@ TEST_F(ConnectionManagerTest, testDrainAllAfterPct) {
   double drain_pct = 0.8;
 
   for (auto i = conns_.size() - static_cast<int>(conns_.size() * drain_pct);
-       i < conns_.size(); ++i) {
+       i < conns_.size();
+       ++i) {
     EXPECT_CALL(*conns_[i], notifyPendingShutdown());
   }
 
   cm_->drainConnections(drain_pct, std::chrono::milliseconds(50));
 
   for (size_t i = 0;
-      i < conns_.size() - static_cast<size_t>(conns_.size() * drain_pct); ++i) {
+       i < conns_.size() - static_cast<size_t>(conns_.size() * drain_pct);
+       ++i) {
     EXPECT_CALL(*conns_[i], notifyPendingShutdown());
   }
 
@@ -310,7 +311,7 @@ TEST_F(ConnectionManagerTest, testDropIdle) {
   for (const auto& conn : conns_) {
     // Set everyone to be idle for 100ms
     EXPECT_CALL(*conn, getIdleTime())
-      .WillRepeatedly(Return(std::chrono::milliseconds(100)));
+        .WillRepeatedly(Return(std::chrono::milliseconds(100)));
   }
 
   // Mark the first half of the connections idle
@@ -333,6 +334,36 @@ TEST_F(ConnectionManagerTest, testDropIdle) {
   }
 
   cm_->dropIdleConnections(conns_.size());
+}
+
+TEST_F(ConnectionManagerTest, testDropActive) {
+  for (const auto& conn : conns_) {
+    // Set everyone to be idle for 100ms
+    EXPECT_CALL(*conn, getLastActivityElapsedTime())
+        .WillRepeatedly(Return(std::chrono::milliseconds(100)));
+  }
+
+  // Mark the first half of the connections idle
+  for (size_t i = 0; i < conns_.size(); i++) {
+    if (i < conns_.size() / 2) {
+      cm_->onDeactivated(*conns_[i]);
+    } else {
+      cm_->onActivated(*conns_[i]);
+    }
+  }
+  // remove the first idle conn
+  cm_->removeConnection(conns_[1].get());
+
+  InSequence enforceOrder;
+
+  // Expect all active connections to be dropped
+  for (size_t i = conns_.size() / 2; i < conns_.size(); i++) {
+    EXPECT_CALL(*conns_[i], dropConnection(_))
+        .WillOnce(Invoke([this, i](const std::string&) {
+          cm_->removeConnection(conns_[i].get());
+        }));
+  }
+  cm_->dropActiveConnections(conns_.size(), std::chrono::milliseconds(50));
 }
 
 TEST_F(ConnectionManagerTest, testAddDuringShutdown) {
@@ -417,4 +448,4 @@ TEST_F(ConnectionManagerTest, testAddDuringCloseWhenIdleActive) {
 TEST_F(ConnectionManagerTest, testAddDuringCloseWhenIdleInactive) {
   testAddDuringCloseWhenIdle(true);
 }
-}
+} // namespace

@@ -1,9 +1,5 @@
 #!/usr/bin/env python
 # Copyright (c) Facebook, Inc. and its affiliates.
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-from __future__ import unicode_literals
 
 import specs.fizz as fizz
 import specs.fmt as fmt
@@ -24,7 +20,7 @@ def fbcode_builder_spec(builder):
             # These 2 are set to ON in `proxygen_quic.py`
             "BUILD_QUIC": "OFF",
             "BUILD_TESTS": "OFF",
-            # For bistro
+            # NB May no longer be needed now that Bistro is gone.
             "BUILD_SHARED_LIBS": "OFF",
         },
     )

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -41,10 +41,11 @@ class FixedLengthFrameDecoder : public ByteToByteDecoder {
  public:
   explicit FixedLengthFrameDecoder(size_t length) : length_(length) {}
 
-  bool decode(Context*,
-              folly::IOBufQueue& q,
-              std::unique_ptr<folly::IOBuf>& result,
-              size_t& needed) override {
+  bool decode(
+      Context*,
+      folly::IOBufQueue& q,
+      std::unique_ptr<folly::IOBuf>& result,
+      size_t& needed) override {
     if (q.chainLength() < length_) {
       needed = length_ - q.chainLength();
       return false;

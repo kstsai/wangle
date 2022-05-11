@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,7 +27,7 @@ class SSLSessionCacheManager;
  * Interface to be implemented by providers of external session caches
  */
 class SSLCacheProvider {
-public:
+ public:
   /**
    * Context saved during an external cache request that is used to
    * resume the waiting client.
@@ -53,9 +53,10 @@ public:
    *         happen either before or after this method returns), or
    *         false if the storing cannot be initiated due to an error.
    */
-  virtual bool setAsync(const std::string& sessionId,
-                        const std::string& value,
-                        std::chrono::seconds expiration) = 0;
+  virtual bool setAsync(
+      const std::string& sessionId,
+      const std::string& value,
+      std::chrono::seconds expiration) = 0;
 
   /**
    * Retrieve a session from the external cache. Returns a future that will

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,7 +31,8 @@ class SSLSessionEstablishedCallback {
  public:
   virtual ~SSLSessionEstablishedCallback() = default;
   // notified when a non-reused SSLSession is established.
-  virtual void onEstablished(std::shared_ptr<folly::ssl::SSLSession> session) = 0;
+  virtual void onEstablished(
+      std::shared_ptr<folly::ssl::SSLSession> session) = 0;
 };
 
 class ClientBootstrapSocketOptions {
@@ -92,7 +93,8 @@ class BaseClientBootstrap {
     return this;
   }
 
-  BaseClientBootstrap* sslSession(std::shared_ptr<folly::ssl::SSLSession> sslSession) {
+  BaseClientBootstrap* sslSession(
+      std::shared_ptr<folly::ssl::SSLSession> sslSession) {
     sslSession_ = sslSession;
     return this;
   }
@@ -117,8 +119,7 @@ class BaseClientBootstrap {
     pipeline_ = pipeline;
   }
 
-  virtual void makePipeline(
-      std::shared_ptr<folly::AsyncTransport> socket) {
+  virtual void makePipeline(std::shared_ptr<folly::AsyncTransport> socket) {
     pipeline_ = pipelineFactory_->newPipeline(socket);
   }
 

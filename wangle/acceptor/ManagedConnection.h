@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,8 +17,8 @@
 #pragma once
 
 #include <folly/IntrusiveList.h>
-#include <folly/io/async/HHWheelTimer.h>
 #include <folly/io/async/DelayedDestruction.h>
+#include <folly/io/async/HHWheelTimer.h>
 
 #include <ostream>
 #include <string>
@@ -31,15 +31,13 @@ class ConnectionManager;
  * Interface describing a connection that can be managed by a
  * container such as an Acceptor.
  */
-class ManagedConnection:
-    public folly::HHWheelTimer::Callback,
-    public folly::DelayedDestruction {
+class ManagedConnection : public folly::HHWheelTimer::Callback,
+                          public folly::DelayedDestruction {
  public:
-
   ManagedConnection();
 
   class Callback {
-  public:
+   public:
     virtual ~Callback() = default;
 
     /* Invoked when this connection becomes busy */
@@ -64,8 +62,8 @@ class ManagedConnection:
   virtual bool isBusy() const = 0;
 
   /**
-   * Get the idle time of the connection. If it returning 0, that means the idle
-   * connections will never be dropped during pre load shedding stage.
+   * Get the idle time of the connection. If it returning 0, that means this
+   * idle connection will never be dropped during pre load shedding stage.
    */
   virtual std::chrono::milliseconds getIdleTime() const {
     return std::chrono::milliseconds(0);
@@ -129,12 +127,17 @@ class ManagedConnection:
 
   // Schedule an arbitrary timeout on the HHWheelTimer
   virtual void scheduleTimeout(
-    folly::HHWheelTimer::Callback* callback,
-    std::chrono::milliseconds timeout);
+      folly::HHWheelTimer::Callback* callback,
+      std::chrono::milliseconds timeout);
 
   ConnectionManager* getConnectionManager() {
     return connectionManager_;
   }
+
+  virtual void reportActivity();
+
+  virtual folly::Optional<std::chrono::milliseconds>
+  getLastActivityElapsedTime() const;
 
  protected:
   ~ManagedConnection() override;
@@ -155,11 +158,11 @@ class ManagedConnection:
   }
 
   ConnectionManager* connectionManager_;
+  folly::Optional<std::chrono::steady_clock::time_point> latestActivity_;
 
   folly::SafeIntrusiveListHook listHook_;
-
 };
 
 std::ostream& operator<<(std::ostream& os, const ManagedConnection& conn);
 
-} // wangle
+} // namespace wangle

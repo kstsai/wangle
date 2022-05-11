@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -61,7 +61,7 @@ TEST(AsyncSocketHandlerTest, TransportActiveInactive) {
   // Transport is currently active. Calling pipeline->close()
   // should result in transportInactive being fired.
   EXPECT_CALL(*handler, mockClose(_))
-    .WillOnce(Return(handler->defaultFuture()));
+      .WillOnce(Return(handler->defaultFuture()));
   EXPECT_CALL(*handler, transportInactive(_)).Times(1);
   pipeline->close();
 
@@ -79,7 +79,7 @@ TEST(AsyncSocketHandlerTest, TransportActiveInactive) {
   // Transport is currently inactive. Calling pipeline->close()
   // should not result in transportInactive being fired.
   EXPECT_CALL(*handler, mockClose(_))
-    .WillOnce(Return(handler->defaultFuture()));
+      .WillOnce(Return(handler->defaultFuture()));
   EXPECT_CALL(*handler, transportInactive(_)).Times(0);
   pipeline->close();
 }

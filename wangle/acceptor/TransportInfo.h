@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -47,6 +47,12 @@ struct TransportInfo {
    * timestamp of when the connection handshake was completed
    */
   std::chrono::steady_clock::time_point acceptTime{};
+
+  /*
+   * timestamp of when the socket was accepted
+   * and ready to be pushed into the socket queue
+   */
+  std::chrono::steady_clock::time_point timeBeforeEnqueue{};
 
   /*
    * connection RTT (Round-Trip Time)
@@ -116,8 +122,8 @@ struct TransportInfo {
   /*
    * TCP information as fetched from getsockopt(2)
    */
-  tcp_info tcpinfo {};
-#endif  // defined(__linux__) || defined(__FreeBSD__) || defined(__APPLE__)
+  tcp_info tcpinfo{};
+#endif // defined(__linux__) || defined(__FreeBSD__) || defined(__APPLE__)
 
   /*
    * time for setting the connection, from the moment in was accepted until it
@@ -196,6 +202,11 @@ struct TransportInfo {
    * The application protocol running on the transport (h2, etc.)
    */
   std::shared_ptr<std::string> appProtocol{nullptr};
+
+  /**
+   * list of next protocols from client hello packet
+   */
+  std::shared_ptr<std::vector<std::string>> clientAlpns{nullptr};
 
   /*
    * total number of bytes sent over the connection
@@ -345,8 +356,7 @@ struct TransportInfo {
   /*
    * perform the getsockopt(2) syscall to fetch TCP info for a given socket
    */
-  static bool readTcpInfo(tcp_info* tcpinfo,
-                          const folly::AsyncSocket* sock);
+  static bool readTcpInfo(tcp_info* tcpinfo, const folly::AsyncSocket* sock);
 #endif
 };
 

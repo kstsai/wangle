@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,14 +18,16 @@
 
 #include <wangle/channel/Handler.h>
 
-#include <thrift/test/gen-cpp2/ThriftTest.h>
 #include <thrift/lib/cpp2/protocol/Serializer.h>
+#include <thrift/test/gen-cpp2/ThriftTest.h>
 
 // Do some serialization / deserialization using thrift.
 // A real rpc server would probably use generated client/server stubs
 class ClientSerializeHandler : public wangle::Handler<
-  std::unique_ptr<folly::IOBuf>, thrift::test::Xtruct,
-  thrift::test::Bonk, std::unique_ptr<folly::IOBuf>> {
+                                   std::unique_ptr<folly::IOBuf>,
+                                   thrift::test::Xtruct,
+                                   thrift::test::Bonk,
+                                   std::unique_ptr<folly::IOBuf>> {
  public:
   void read(Context* ctx, std::unique_ptr<folly::IOBuf> msg) override {
     thrift::test::Xtruct received =

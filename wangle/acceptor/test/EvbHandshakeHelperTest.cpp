@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,12 +19,12 @@
 #include <chrono>
 #include <thread>
 
-#include <folly/synchronization/Baton.h>
 #include <folly/futures/Barrier.h>
 #include <folly/io/async/ScopedEventBaseThread.h>
 #include <folly/io/async/test/MockAsyncSSLSocket.h>
 #include <folly/portability/GMock.h>
 #include <folly/portability/GTest.h>
+#include <folly/synchronization/Baton.h>
 
 #include <wangle/acceptor/test/AcceptorHelperMocks.h>
 
@@ -192,7 +192,6 @@ TEST_F(EvbHandshakeHelperTest, TestDropConnectionTricky) {
   folly::Baton<> barrier;
   folly::Baton<> connectionReadyCalled;
   folly::futures::Barrier raceBarrier(3);
-
 
   // One of these two methods will be called depending on the race, but
   // not both of them.

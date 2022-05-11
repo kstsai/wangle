@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,9 +16,9 @@
 
 #pragma once
 
-#include <string>
-#include <glog/logging.h>
 #include <folly/ssl/OpenSSLPtrTypes.h>
+#include <glog/logging.h>
+#include <string>
 
 namespace wangle {
 
@@ -35,4 +35,4 @@ bool isSameSession(
     std::pair<SSL_SESSION*, size_t> lhs,
     std::pair<SSL_SESSION*, size_t> rhs);
 
-}
+} // namespace wangle

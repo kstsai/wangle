@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,12 +26,12 @@ namespace wangle {
  */
 enum class SecureTransportType {
   NONE, // Transport is not secure.
-  TLS,  // Transport is based on TLS
+  TLS, // Transport is based on TLS
 };
 
 std::string getSecureTransportName(const SecureTransportType& type);
 
-}
+} // namespace wangle
 
 // This enum used to be un-namespaced. This is here for temporary backwards
 // compatibility with old uses of this enum.

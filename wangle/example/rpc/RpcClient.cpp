@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,14 +17,14 @@
 #include <folly/portability/GFlags.h>
 
 #include <folly/init/Init.h>
-#include <wangle/service/Service.h>
-#include <wangle/service/ExpiringFilter.h>
-#include <wangle/service/ClientDispatcher.h>
 #include <wangle/bootstrap/ClientBootstrap.h>
 #include <wangle/channel/AsyncSocketHandler.h>
+#include <wangle/channel/EventBaseHandler.h>
 #include <wangle/codec/LengthFieldBasedFrameDecoder.h>
 #include <wangle/codec/LengthFieldPrepender.h>
-#include <wangle/channel/EventBaseHandler.h>
+#include <wangle/service/ClientDispatcher.h>
+#include <wangle/service/ExpiringFilter.h>
+#include <wangle/service/Service.h>
 
 #include <wangle/example/rpc/ClientSerializeHandler.h>
 
@@ -61,18 +61,18 @@ class BonkMultiplexClientDispatcher
     : public ClientDispatcherBase<SerializePipeline, Bonk, Xtruct> {
  public:
   void read(Context*, Xtruct in) override {
-    auto search = requests_.find(*in.i32_thing_ref());
+    auto search = requests_.find(*in.i32_thing());
     CHECK(search != requests_.end());
     auto p = std::move(search->second);
-    requests_.erase(*in.i32_thing_ref());
+    requests_.erase(*in.i32_thing());
     p.setValue(in);
   }
 
   Future<Xtruct> operator()(Bonk arg) override {
-    auto& p = requests_[*arg.type_ref()];
+    auto& p = requests_[*arg.type()];
     auto f = p.getFuture();
     p.setInterruptHandler([arg, this](const folly::exception_wrapper&) {
-      this->requests_.erase(*arg.type_ref());
+      this->requests_.erase(*arg.type());
     });
     this->pipeline_->write(arg);
 
@@ -125,11 +125,11 @@ int main(int argc, char** argv) {
       std::cout << "Input string and int" << std::endl;
 
       Bonk request;
-      std::cin >> *request.message_ref();
-      std::cin >> *request.type_ref();
+      std::cin >> *request.message();
+      std::cin >> *request.type();
       service(request).thenValue([request](Xtruct response) {
-        CHECK(*request.type_ref() == *response.i32_thing_ref());
-        std::cout << *response.string_thing_ref() << std::endl;
+        CHECK(*request.type() == *response.i32_thing());
+        std::cout << *response.string_thing() << std::endl;
       });
     }
   } catch (const std::exception& e) {

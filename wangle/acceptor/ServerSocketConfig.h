@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -129,10 +129,11 @@ struct ServerSocketConfig {
   /**
    * Options for controlling the SSL cache.
    */
-  SSLCacheOptions sslCacheOptions{std::chrono::hours(1),
-                                  20480,
-                                  200,
-                                  std::chrono::hours(72)};
+  SSLCacheOptions sslCacheOptions{
+      std::chrono::hours(1),
+      20480,
+      200,
+      std::chrono::hours(72)};
 
   /**
    * Determines whether or not to allow insecure connections over a secure
@@ -188,7 +189,7 @@ struct ServerSocketConfig {
   /**
    * Enable so-reuseport while binding the listening socket
    */
-   bool reusePort{false};
+  bool reusePort{false};
 
   FizzConfig fizzConfig;
 

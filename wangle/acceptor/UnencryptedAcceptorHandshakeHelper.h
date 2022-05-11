@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -35,10 +35,7 @@ class UnencryptedAcceptorHandshakeHelper : public AcceptorHandshakeHelper {
       folly::AsyncSSLSocket::UniquePtr sock,
       AcceptorHandshakeHelper::Callback* callback) noexcept override {
     callback->connectionReady(
-      std::move(sock),
-      "",
-      SecureTransportType::NONE,
-      folly::none);
+        std::move(sock), "", SecureTransportType::NONE, folly::none);
   }
 
   void dropConnection(
@@ -47,4 +44,4 @@ class UnencryptedAcceptorHandshakeHelper : public AcceptorHandshakeHelper {
   }
 };
 
-}
+} // namespace wangle

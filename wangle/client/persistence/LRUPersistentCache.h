@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -45,7 +45,8 @@ class CachePersistence {
    * specified version.  Returns true if persistence succeeded.
    */
   bool persistVersionedData(
-      const folly::dynamic& kvPairs, const CacheDataVersion& version) {
+      const folly::dynamic& kvPairs,
+      const CacheDataVersion& version) {
     auto result = persist(kvPairs);
     if (result) {
       persistedVersion_ = version;
@@ -271,6 +272,6 @@ class LRUPersistentCache
   const bool inlinePersistenceLoading_;
 };
 
-}
+} // namespace wangle
 
 #include <wangle/client/persistence/LRUPersistentCache-inl.h>

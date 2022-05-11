@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,9 +18,9 @@
 
 #include <utility>
 
-#include <folly/dynamic.h>
-#include <folly/container/EvictingCacheMap.h>
 #include <folly/Optional.h>
+#include <folly/container/EvictingCacheMap.h>
+#include <folly/dynamic.h>
 #include <wangle/client/persistence/PersistentCacheCommon.h>
 
 namespace wangle {
@@ -29,7 +29,7 @@ namespace wangle {
  * A threadsafe cache map that delegates to an EvictingCacheMap and maintains
  * a version of the data.
  */
-template<typename K, typename V, typename MutexT>
+template <typename K, typename V, typename MutexT>
 class LRUInMemoryCache {
  public:
   /**
@@ -66,7 +66,6 @@ class LRUInMemoryCache {
   }
 
  private:
-
   // must be called under a write lock
   void incrementVersion() {
     ++version_;
@@ -79,9 +78,8 @@ class LRUInMemoryCache {
   CacheDataVersion version_{kDefaultInitCacheDataVersion};
   // mutable so we can take read locks in const methods
   mutable MutexT cacheLock_;
-
 };
 
-}
+} // namespace wangle
 
 #include <wangle/client/persistence/LRUInMemoryCache-inl.h>

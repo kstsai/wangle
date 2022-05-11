@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -56,8 +56,8 @@ class FilePoller {
   using Condition = std::function<
       bool(const FileModificationData&, const FileModificationData&)>;
 
-  explicit FilePoller(std::chrono::milliseconds pollInterval =
-                      kDefaultPollInterval);
+  explicit FilePoller(
+      std::chrono::milliseconds pollInterval = kDefaultPollInterval);
 
   virtual ~FilePoller();
 
@@ -101,7 +101,7 @@ class FilePoller {
 
  private:
   static constexpr std::chrono::milliseconds kDefaultPollInterval =
-        std::chrono::milliseconds(10000);
+      std::chrono::milliseconds(10000);
 
   struct FileData {
     FileData(Cob yesCob, Cob noCob, Condition cond)
@@ -160,7 +160,7 @@ class FilePoller {
   class ThreadProtector {
    public:
     ThreadProtector() {
-     *polling() = true;
+      *polling() = true;
     }
     ~ThreadProtector() {
       *polling() = false;
@@ -168,8 +168,9 @@ class FilePoller {
     static bool inPollerThread() {
       return *polling();
     }
-private:
+
+   private:
     static bool* polling();
   };
 };
-}
+} // namespace wangle

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,10 +22,10 @@
 namespace wangle {
 
 // A CacheLockGuard specialization for a folly::SharedMutex
-template<>
+template <>
 struct CacheLockGuard<folly::SharedMutex> {
   using Read = folly::SharedMutex::ReadHolder;
   using Write = folly::SharedMutex::WriteHolder;
 };
 
-}
+} // namespace wangle

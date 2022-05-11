@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-#include <wangle/channel/FileRegion.h>
 #include <folly/io/async/test/AsyncSocketTest.h>
 #include <folly/portability/GTest.h>
+#include <wangle/channel/FileRegion.h>
 
 #ifdef SPLICE_F_NONBLOCK
 using namespace folly;
@@ -108,6 +108,6 @@ TEST_F(FileRegionTest, Repeated) {
   for (auto& buf : rcb.buffers) {
     receivedBytes += buf.length;
   }
-  ASSERT_EQ(receivedBytes, sendCount*count);
+  ASSERT_EQ(receivedBytes, sendCount * count);
 }
 #endif

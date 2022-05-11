@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,8 +25,7 @@ namespace wangle {
 class TransportPeeker : public folly::AsyncTransport::ReadCallback,
                         public folly::DelayedDestruction {
  public:
-  using UniquePtr =
-      std::unique_ptr<TransportPeeker, folly::DelayedDestruction::Destructor>;
+  using UniquePtr = folly::DelayedDestructionUniquePtr<TransportPeeker>;
 
   class Callback {
    public:
@@ -110,8 +109,7 @@ class TransportPeeker : public folly::AsyncTransport::ReadCallback,
 
 class SocketPeeker : public TransportPeeker, private TransportPeeker::Callback {
  public:
-  using UniquePtr =
-      std::unique_ptr<SocketPeeker, folly::DelayedDestruction::Destructor>;
+  using UniquePtr = folly::DelayedDestructionUniquePtr<SocketPeeker>;
 
   using Callback = TransportPeeker::Callback;
 
@@ -122,7 +120,7 @@ class SocketPeeker : public TransportPeeker, private TransportPeeker::Callback {
 
  private:
   void peekSuccess(std::vector<uint8_t> data) noexcept override {
-    socket_.setPreReceivedData(folly::IOBuf::copyBuffer(folly::range(data)));
+    socket_.setPreReceivedData(folly::IOBuf::copyBuffer(data));
     socketCallback_->peekSuccess(std::move(data));
   }
 

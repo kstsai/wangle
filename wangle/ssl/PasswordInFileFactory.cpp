@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,8 +17,8 @@
 #include <wangle/ssl/PasswordInFileFactory.h>
 
 namespace wangle {
-std::shared_ptr<folly::PasswordInFile> PasswordInFileFactory::getPasswordCollector(
-    const std::string& passwordPath) {
+std::shared_ptr<folly::PasswordInFile>
+PasswordInFileFactory::getPasswordCollector(const std::string& passwordPath) {
   // Check if we've got one saved
   auto it = collectors_.find(passwordPath);
   if (it != collectors_.end()) {
@@ -26,8 +26,7 @@ std::shared_ptr<folly::PasswordInFile> PasswordInFileFactory::getPasswordCollect
   }
 
   // No saved one, make a new one.
-  auto sslPassword = std::make_shared<folly::PasswordInFile>(
-      passwordPath);
+  auto sslPassword = std::make_shared<folly::PasswordInFile>(passwordPath);
   collectors_[passwordPath] = sslPassword;
   return sslPassword;
 }

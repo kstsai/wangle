@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -53,8 +53,7 @@ class BroadcastPool {
   class BroadcastManager : public PipelineManager,
                            public folly::DelayedDestruction {
    public:
-    using UniquePtr = std::unique_ptr<
-      BroadcastManager, folly::DelayedDestruction::Destructor>;
+    using UniquePtr = folly::DelayedDestructionUniquePtr<BroadcastManager>;
 
     BroadcastManager(
         BroadcastPool<T, R, P>* broadcastPool,

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,11 +30,14 @@ struct SSLSessionCacheData {
   std::chrono::time_point<std::chrono::system_clock> addedTime;
   folly::fbstring serviceIdentity;
   std::shared_ptr<SSL_SESSION> sessionDuplicateTemplate;
+  folly::fbstring peerIdentities;
 };
 
-} //proxygen
+} // namespace wangle
 
 namespace folly {
-  template<> folly::dynamic toDynamic(const wangle::SSLSessionCacheData& d);
-  template<> wangle::SSLSessionCacheData convertTo(const dynamic& d);
-} //folly
+template <>
+folly::dynamic toDynamic(const wangle::SSLSessionCacheData& d);
+template <>
+wangle::SSLSessionCacheData convertTo(const dynamic& d);
+} // namespace folly

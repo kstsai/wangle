@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,15 +14,15 @@
  * limitations under the License.
  */
 
-#include <folly/portability/GTest.h>
 #include <folly/executors/ManualExecutor.h>
+#include <folly/portability/GTest.h>
 #include <wangle/client/persistence/PersistentCacheCommon.h>
 
 using namespace testing;
 
 namespace wangle {
 
-class PersistentCacheConfigTest : public Test{};
+class PersistentCacheConfigTest : public Test {};
 
 TEST_F(PersistentCacheConfigTest, ConfigBuilderCanBuild) {
   auto executor = std::make_shared<folly::ManualExecutor>();
@@ -40,4 +40,4 @@ TEST_F(PersistentCacheConfigTest, ConfigBuilderCanBuild) {
   EXPECT_EQ(executor, config.executor);
 }
 
-}
+} // namespace wangle

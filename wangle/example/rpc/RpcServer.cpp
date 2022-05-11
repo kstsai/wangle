@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,16 +16,16 @@
 
 #include <folly/portability/GFlags.h>
 
+#include <folly/executors/CPUThreadPoolExecutor.h>
 #include <folly/init/Init.h>
-#include <wangle/service/Service.h>
-#include <wangle/service/ExecutorFilter.h>
-#include <wangle/service/ServerDispatcher.h>
 #include <wangle/bootstrap/ServerBootstrap.h>
 #include <wangle/channel/AsyncSocketHandler.h>
+#include <wangle/channel/EventBaseHandler.h>
 #include <wangle/codec/LengthFieldBasedFrameDecoder.h>
 #include <wangle/codec/LengthFieldPrepender.h>
-#include <wangle/channel/EventBaseHandler.h>
-#include <folly/executors/CPUThreadPoolExecutor.h>
+#include <wangle/service/ExecutorFilter.h>
+#include <wangle/service/ServerDispatcher.h>
+#include <wangle/service/Service.h>
 
 #include <wangle/example/rpc/ServerSerializeHandler.h>
 
@@ -43,19 +43,17 @@ class RpcService : public Service<Bonk, Xtruct> {
  public:
   Future<Xtruct> operator()(Bonk request) override {
     // Oh no, we got Bonked!  Quick, Bonk back
-    printf(
-        "Bonk: %s, %i\n", request.message_ref()->c_str(), *request.type_ref());
+    printf("Bonk: %s, %i\n", request.message()->c_str(), *request.type());
 
     /* sleep override: ignore lint
      * useful for testing dispatcher behavior by hand
      */
     // Wait for a bit
-    return futures::sleepUnsafe(std::chrono::seconds(*request.type_ref()))
+    return futures::sleepUnsafe(std::chrono::seconds(*request.type()))
         .thenValue([request](auto&&) {
           Xtruct response;
-          *response.string_thing_ref() =
-              "Stop saying " + *request.message_ref() + "!";
-          *response.i32_thing_ref() = *request.type_ref();
+          *response.string_thing() = "Stop saying " + *request.message() + "!";
+          *response.i32_thing() = *request.type();
           return response;
         });
   }

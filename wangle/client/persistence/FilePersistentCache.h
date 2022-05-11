@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,12 +38,13 @@ namespace wangle {
  * serialization and deserialization. So It may not suit your need until
  * true support arbitrary types is written.
  */
-template<typename K, typename V, typename M = std::mutex>
+template <typename K, typename V, typename M = std::mutex>
 class FilePersistentCache : public PersistentCache<K, V> {
  public:
   FilePersistentCache(const std::string& file, PersistentCacheConfig config)
-    : cache_(std::make_shared<LRUPersistentCache<K, V, M>>(std::move(config),
-          std::make_unique<FilePersistenceLayer>(file))) {
+      : cache_(std::make_shared<LRUPersistentCache<K, V, M>>(
+            std::move(config),
+            std::make_unique<FilePersistenceLayer>(file))) {
     cache_->init();
   }
 

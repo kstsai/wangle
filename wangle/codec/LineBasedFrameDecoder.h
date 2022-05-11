@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,24 +29,20 @@ namespace wangle {
  */
 class LineBasedFrameDecoder : public ByteToByteDecoder {
  public:
-  enum class TerminatorType {
-    BOTH,
-    NEWLINE,
-    CARRIAGENEWLINE
-  };
+  enum class TerminatorType { BOTH, NEWLINE, CARRIAGENEWLINE };
 
   explicit LineBasedFrameDecoder(
       uint32_t maxLength = UINT_MAX,
       bool stripDelimiter = true,
       TerminatorType terminatorType = TerminatorType::BOTH);
 
-  bool decode(Context* ctx,
-              folly::IOBufQueue& buf,
-              std::unique_ptr<folly::IOBuf>& result,
-              size_t&) override;
+  bool decode(
+      Context* ctx,
+      folly::IOBufQueue& buf,
+      std::unique_ptr<folly::IOBuf>& result,
+      size_t&) override;
 
  private:
-
   int64_t findEndOfLine(folly::IOBufQueue& buf);
 
   void fail(Context* ctx, std::string len);

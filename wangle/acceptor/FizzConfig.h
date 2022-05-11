@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,6 +30,11 @@ struct FizzConfig {
   std::vector<fizz::PskKeyExchangeMode> supportedPskModes;
   bool acceptEarlyData{false};
   bool earlyDataFbOnly{false};
+
+  // EXPERIMENTAL: Attempt to switch to kTLS based I/O on successful
+  // fizz handshakes. This may or may not work depending on platform support
+  // and connection parameters negotiated by the connection.
+  bool preferKTLS{false};
 
   folly::Optional<uint16_t> maxRecord;
   std::vector<fizz::CertificateCompressionAlgorithm>

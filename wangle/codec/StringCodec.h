@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,12 +23,17 @@ namespace wangle {
 /*
  * StringCodec converts a pipeline from IOBufs to std::strings.
  */
-class StringCodec : public Handler<std::unique_ptr<folly::IOBuf>, std::string,
-                                   std::string, std::unique_ptr<folly::IOBuf>> {
+class StringCodec : public Handler<
+                        std::unique_ptr<folly::IOBuf>,
+                        std::string,
+                        std::string,
+                        std::unique_ptr<folly::IOBuf>> {
  public:
   typedef typename Handler<
-   std::unique_ptr<folly::IOBuf>, std::string,
-   std::string, std::unique_ptr<folly::IOBuf>>::Context Context;
+      std::unique_ptr<folly::IOBuf>,
+      std::string,
+      std::string,
+      std::unique_ptr<folly::IOBuf>>::Context Context;
 
   void read(Context* ctx, std::unique_ptr<folly::IOBuf> buf) override {
     if (buf) {

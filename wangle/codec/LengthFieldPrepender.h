@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -49,10 +49,11 @@ namespace wangle {
  */
 class LengthFieldPrepender : public OutboundBytesToBytesHandler {
  public:
-  explicit LengthFieldPrepender(int lengthFieldLength = 4,
-                                int lengthAdjustment = 0,
-                                bool lengthIncludesLengthField = false,
-                                bool networkByteOrder = true);
+  explicit LengthFieldPrepender(
+      int lengthFieldLength = 4,
+      int lengthAdjustment = 0,
+      bool lengthIncludesLengthField = false,
+      bool networkByteOrder = true);
 
   folly::Future<folly::Unit> write(
       Context* ctx,

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,8 +21,8 @@ using folly::SharedMutex;
 namespace wangle {
 
 void ThreadSafeSSLSessionCache::setSSLSession(
-  const std::string& identity,
-  folly::ssl::SSLSessionUniquePtr session) noexcept {
+    const std::string& identity,
+    folly::ssl::SSLSessionUniquePtr session) noexcept {
   SharedMutex::WriteHolder lock(mutex_);
   delegate_->setSSLSession(identity, std::move(session));
 }
@@ -49,4 +49,4 @@ size_t ThreadSafeSSLSessionCache::size() const {
   return delegate_->size();
 }
 
-}
+} // namespace wangle

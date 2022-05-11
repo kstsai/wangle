@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,8 +37,8 @@ class NaiveRoutingDataHandler : public RoutingDataHandler<char> {
   NaiveRoutingDataHandler(uint64_t connId, Callback* cob)
       : RoutingDataHandler<char>(connId, cob) {}
 
-  bool parseRoutingData(folly::IOBufQueue& bufQueue,
-                        RoutingData& routingData) override {
+  bool parseRoutingData(folly::IOBufQueue& bufQueue, RoutingData& routingData)
+      override {
     if (bufQueue.chainLength() == 0) {
       return false;
     }

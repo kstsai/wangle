@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -64,8 +64,7 @@ class MultiFilePoller {
    */
   class CallbackId final {
    private:
-    explicit CallbackId(size_t id) : id_(id) {
-    }
+    explicit CallbackId(size_t id) : id_(id) {}
     friend class MultiFilePoller;
     size_t id_;
   };
@@ -117,8 +116,7 @@ class MultiFilePoller {
 
   struct CallbackDetail {
     CallbackDetail(StringReferences files, Callback cb)
-        : files_(std::move(files)), cb_(std::move(cb)) {
-    }
+        : files_(std::move(files)), cb_(std::move(cb)) {}
     StringReferences files_;
     Callback cb_;
   };

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -39,17 +39,16 @@ class FileServerHandler : public HandlerAdapter<std::string> {
 
     int fd = open(filename.c_str(), O_RDONLY);
     if (fd == -1) {
-      write(ctx, sformat("Error opening {}: {}\r\n",
-                         filename,
-                         strerror(errno)));
+      write(
+          ctx, sformat("Error opening {}: {}\r\n", filename, strerror(errno)));
       return;
     }
 
     struct stat buf;
     if (fstat(fd, &buf) == -1) {
-      write(ctx, sformat("Could not stat file {}: {}\r\n",
-                         filename,
-                         strerror(errno)));
+      write(
+          ctx,
+          sformat("Could not stat file {}: {}\r\n", filename, strerror(errno)));
       return;
     }
 

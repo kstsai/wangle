@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -82,8 +82,8 @@ class OutputBufferingHandler : public OutboundBytesToBytesHandler,
 
     // If there are sends queued, cancel them
     sharedPromise_.setException(
-      folly::make_exception_wrapper<std::runtime_error>(
-        "close() called while sends still pending"));
+        folly::make_exception_wrapper<std::runtime_error>(
+            "close() called while sends still pending"));
     sends_.reset();
     sharedPromise_ = folly::SharedPromise<folly::Unit>();
     return ctx->fireClose();

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,19 +16,17 @@
 
 #include <wangle/acceptor/SecurityProtocolContextManager.h>
 
-#include <thread>
 #include <folly/portability/GMock.h>
 #include <folly/portability/GTest.h>
+#include <thread>
 
 using namespace wangle;
 using namespace testing;
 
-template<size_t N>
-class LengthPeeker :
-  public PeekingAcceptorHandshakeHelper::PeekCallback {
+template <size_t N>
+class LengthPeeker : public PeekingAcceptorHandshakeHelper::PeekCallback {
  public:
-  LengthPeeker():
-    PeekingAcceptorHandshakeHelper::PeekCallback(N) {}
+  LengthPeeker() : PeekingAcceptorHandshakeHelper::PeekCallback(N) {}
 
   AcceptorHandshakeHelper::UniquePtr getHelper(
       const std::vector<uint8_t>& /* bytes */,

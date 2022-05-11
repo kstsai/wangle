@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Facebook, Inc. and its affiliates.
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,10 +14,10 @@
  * limitations under the License.
  */
 
-#include <glog/logging.h>
-#include <folly/portability/GTest.h>
-#include <wangle/ssl/SSLSessionCacheManager.h>
 #include <folly/Random.h>
+#include <folly/portability/GTest.h>
+#include <glog/logging.h>
+#include <wangle/ssl/SSLSessionCacheManager.h>
 
 using namespace folly;
 using namespace wangle;
