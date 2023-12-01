@@ -15,8 +15,14 @@
  */
 
 #include <fizz/record/Types.h>
+#include <fizz/server/State.h>
+#include <folly/experimental/io/AsyncIoUringSocketFactory.h>
+#if !defined(_WIN32) // No FD-passing on Windows, don't try to make it build.
+#include <folly/io/async/fdsock/AsyncFdSocket.h>
+#endif
 #include <wangle/acceptor/FizzAcceptorHandshakeHelper.h>
 #include <wangle/acceptor/SSLAcceptorHandshakeHelper.h>
+#include <wangle/ssl/ClientHelloExtStats.h>
 #include <wangle/ssl/SSLContextManager.h>
 
 using namespace fizz::extensions;
@@ -45,27 +51,46 @@ void FizzAcceptorHandshakeHelper::start(
     folly::AsyncSSLSocket::UniquePtr sock,
     AcceptorHandshakeHelper::Callback* callback) noexcept {
   callback_ = callback;
-  sslContext_ = sock->getSSLContext();
 
   if (tokenBindingContext_) {
     tokenBindingExtension_ =
         std::make_shared<TokenBindingServerExtension>(tokenBindingContext_);
   }
 
-  transport_ =
-      createFizzServer(std::move(sock), context_, tokenBindingExtension_);
+  transport_ = createFizzServer(
+      std::move(sock), context_, tokenBindingExtension_, transportOptions_);
   transport_->accept(this);
 }
 
 AsyncFizzServer::UniquePtr FizzAcceptorHandshakeHelper::createFizzServer(
     folly::AsyncSSLSocket::UniquePtr sslSock,
     const std::shared_ptr<const FizzServerContext>& fizzContext,
-    const std::shared_ptr<fizz::ServerExtensions>& extensions) {
-  folly::AsyncSocket::UniquePtr asyncSock(
-      new folly::AsyncSocket(std::move(sslSock)));
-  asyncSock->cacheAddresses();
-  AsyncFizzServer::UniquePtr fizzServer(
-      new AsyncFizzServer(std::move(asyncSock), fizzContext, extensions));
+    const std::shared_ptr<fizz::ServerExtensions>& extensions,
+    fizz::AsyncFizzBase::TransportOptions options) {
+  folly::AsyncTransport::UniquePtr asyncTransport;
+  if (preferIoUringSocket_ &&
+      folly::AsyncIoUringSocketFactory::supports(sslSock->getEventBase())) {
+    asyncTransport = folly::AsyncIoUringSocketFactory::create<
+        folly::AsyncTransport::UniquePtr>(std::move(sslSock));
+  } else {
+#if !defined(_WIN32)
+    folly::SocketAddress addr;
+    sslSock->getPeerAddress(&addr);
+#endif
+    folly::AsyncSocket::UniquePtr asyncSock(
+#if !defined(_WIN32)
+        addr.getFamily() == AF_UNIX
+            ? new folly::AsyncFdSocket(
+                  folly::AsyncFdSocket::DoesNotMoveFdSocketState{},
+                  std::move(sslSock))
+            :
+#endif
+            new folly::AsyncSocket(std::move(sslSock)));
+    asyncSock->cacheAddresses();
+    asyncTransport = folly::AsyncTransport::UniquePtr(std::move(asyncSock));
+  }
+  AsyncFizzServer::UniquePtr fizzServer(new AsyncFizzServer(
+      std::move(asyncTransport), fizzContext, extensions, options));
   fizzServer->setHandshakeRecordAlignedReads(handshakeRecordAlignedReads_);
 
   return fizzServer;
@@ -81,6 +106,9 @@ void FizzAcceptorHandshakeHelper::fizzHandshakeSuccess(
   tinfo_.securityType = transport->getSecurityProtocol();
   tinfo_.sslSetupTime = std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::steady_clock::now() - acceptTime_);
+  tinfo_.echStatus =
+      fizz::server::toString(transport->getState().echStatus()).str();
+
   if (tokenBindingExtension_ &&
       tokenBindingExtension_->getNegotiatedKeyParam().has_value()) {
     tinfo_.negotiatedTokenBindingKeyParameters =
@@ -98,6 +126,11 @@ void FizzAcceptorHandshakeHelper::fizzHandshakeSuccess(
         detail::enumVectorToHexStr(handshakeLogging->clientCiphers));
     tinfo_.sslClientExts = std::make_shared<std::string>(
         folly::join(":", handshakeLogging->clientExtensions));
+    tinfo_.clientAlpns = std::make_shared<std::vector<std::string>>(
+        handshakeLogging->clientAlpns);
+    tinfo_.sslClientSigAlgs =
+        std::make_shared<std::string>(detail::enumVectorToHexStr(
+            handshakeLogging->clientSignatureAlgorithms));
   }
 
   auto appProto = transport->getApplicationProtocol();
@@ -138,25 +171,72 @@ void FizzAcceptorHandshakeHelper::fizzHandshakeError(
       transport_.get(), std::move(handshakeException), sslError_);
 }
 
-folly::AsyncSSLSocket::UniquePtr FizzAcceptorHandshakeHelper::createSSLSocket(
-    const std::shared_ptr<folly::SSLContext>& context,
-    folly::AsyncTransport::UniquePtr transport) {
-  auto socket = transport->getUnderlyingTransport<folly::AsyncSocket>();
-  auto sslSocket = folly::AsyncSSLSocket::UniquePtr(
-      new folly::AsyncSSLSocket(context, CHECK_NOTNULL(socket)));
-  transport.reset();
-  return sslSocket;
+// AsyncIoUringSocket::AsyncDetachFdCallback
+void FizzAcceptorHandshakeHelper::fdDetached(
+    folly::NetworkSocket ns,
+    std::unique_ptr<folly::IOBuf> unread) noexcept {
+  if (!fallback_.clientHello) {
+    fallback_.clientHello = std::move(unread);
+  } else if (unread) {
+    fallback_.clientHello->appendToChain(std::move(unread));
+  }
+
+  auto context = selectSSLCtx(fallback_.sni);
+  sslSocket_ = folly::AsyncSSLSocket::UniquePtr(
+      new folly::AsyncSSLSocket(context, transport_->getEventBase(), ns));
+  transport_.reset();
+
+  sslSocket_->setPreReceivedData(std::move(fallback_.clientHello));
+  sslSocket_->enableClientHelloParsing();
+  sslSocket_->forceCacheAddrOnFailure(true);
+  sslSocket_->sslAccept(this);
+}
+
+void FizzAcceptorHandshakeHelper::fdDetachFail(
+    const folly::AsyncSocketException& ex) noexcept {
+  fizzHandshakeError(
+      transport_.get(),
+      folly::make_exception_wrapper<folly::AsyncSocketException>(ex));
+}
+
+std::shared_ptr<folly::SSLContext> FizzAcceptorHandshakeHelper::selectSSLCtx(
+    const folly::Optional<std::string>& sni) const {
+  if (sni) {
+    if (auto context = sslContextManager_->getSSLCtx(sni.value())) {
+      return context;
+    }
+  } else {
+    if (auto context = sslContextManager_->getNoSNICtx()) {
+      return context;
+    }
+    if (auto stats = sslContextManager_->getClientHelloExtStats()) {
+      stats->recordAbsentHostname();
+    }
+  }
+  return sslContextManager_->getDefaultSSLCtx();
 }
 
 void FizzAcceptorHandshakeHelper::fizzHandshakeAttemptFallback(
-    std::unique_ptr<folly::IOBuf> clientHello) {
+    AttemptVersionFallback fallback) {
   VLOG(3) << "Fallback to OpenSSL";
   if (loggingCallback_) {
     loggingCallback_->logFizzHandshakeFallback(*transport_, tinfo_);
   }
-  sslSocket_ = createSSLSocket(sslContext_, std::move(transport_));
 
-  sslSocket_->setPreReceivedData(std::move(clientHello));
+  folly::AsyncSocket* socket =
+      transport_->getUnderlyingTransport<folly::AsyncSocket>();
+  if (!socket &&
+      folly::AsyncIoUringSocketFactory::asyncDetachFd(*transport_, this)) {
+    fallback_ = std::move(fallback);
+    return;
+  }
+
+  auto context = selectSSLCtx(fallback.sni);
+  sslSocket_ = folly::AsyncSSLSocket::UniquePtr(
+      new folly::AsyncSSLSocket(context, CHECK_NOTNULL(socket)));
+  transport_.reset();
+
+  sslSocket_->setPreReceivedData(std::move(fallback.clientHello));
   sslSocket_->enableClientHelloParsing();
   sslSocket_->forceCacheAddrOnFailure(true);
   sslSocket_->sslAccept(this);

@@ -18,6 +18,7 @@
 
 #include <wangle/acceptor/FizzConfig.h>
 #include <wangle/acceptor/SocketOptions.h>
+#include <wangle/ssl/SNIConfig.h>
 #include <wangle/ssl/SSLCacheOptions.h>
 #include <wangle/ssl/SSLContextConfig.h>
 #include <wangle/ssl/SSLUtil.h>
@@ -64,7 +65,7 @@ struct ServerSocketConfig {
   }
 
   bool isSSL() const {
-    return !(sslContextConfigs.empty());
+    return !(sslContextConfigs.empty() && sniConfigs.empty());
   }
 
   /**
@@ -86,6 +87,11 @@ struct ServerSocketConfig {
         return true;
       }
     }
+    for (const auto& cfg : sniConfigs) {
+      if (!cfg.contextConfig.isLocalPrivateKey) {
+        return true;
+      }
+    }
     return false;
   }
 
@@ -94,6 +100,10 @@ struct ServerSocketConfig {
    */
   void updateSSLContextConfigs(std::vector<SSLContextConfig> newConfigs) const {
     sslContextConfigs = newConfigs;
+  }
+
+  void updateSNIConfigs(std::vector<SNIConfig> newConfigs) const {
+    sniConfigs = newConfigs;
   }
 
   /**
@@ -115,6 +125,11 @@ struct ServerSocketConfig {
    * The number of milliseconds a connection can be idle before we close it.
    */
   std::chrono::milliseconds connectionIdleTimeout{600000};
+
+  /**
+   * The number of milliseconds a connection can remain alive for (0 = infinity)
+   */
+  std::chrono::milliseconds connectionAgeTimeout{0};
 
   /**
    * The number of milliseconds a ssl handshake can timeout (60s)
@@ -151,6 +166,11 @@ struct ServerSocketConfig {
    * The configs for all the SSL_CTX for use by this Acceptor.
    */
   mutable std::vector<SSLContextConfig> sslContextConfigs;
+
+  /**
+   * The configs for all the SNIs served by this Acceptor.
+   */
+  mutable std::vector<SNIConfig> sniConfigs;
 
   /**
    * Determines if the Acceptor does strict checking when loading the SSL
@@ -192,6 +212,11 @@ struct ServerSocketConfig {
   bool reusePort{false};
 
   FizzConfig fizzConfig;
+
+  /**
+   * If supported prefer using IoUring sockets
+   */
+  bool preferIoUring{false};
 
   /**
    * A map containing custom configs.

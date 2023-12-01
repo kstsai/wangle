@@ -17,6 +17,7 @@
 #pragma once
 
 #include <folly/IntrusiveList.h>
+#include <folly/SocketAddress.h>
 #include <folly/io/async/DelayedDestruction.h>
 #include <folly/io/async/HHWheelTimer.h>
 
@@ -26,7 +27,17 @@
 namespace wangle {
 
 class ConnectionManager;
+class ManagedConnection;
 
+class ConnectionAgeTimeout : public folly::HHWheelTimer::Callback {
+ public:
+  void timeoutExpired() noexcept override;
+  explicit ConnectionAgeTimeout(ManagedConnection& connection)
+      : connection_{connection} {}
+
+ private:
+  ManagedConnection& connection_;
+};
 /**
  * Interface describing a connection that can be managed by a
  * container such as an Acceptor.
@@ -34,6 +45,12 @@ class ConnectionManager;
 class ManagedConnection : public folly::HHWheelTimer::Callback,
                           public folly::DelayedDestruction {
  public:
+  /**
+   * ManagedConnection can be in two state either it's active or idle.
+   * This is in connection with ConnectionManager which based on activy
+   * moves connections between two state.
+   */
+  enum ActivationState { ACTIVE, IDLE };
   ManagedConnection();
 
   class Callback {
@@ -60,6 +77,12 @@ class ManagedConnection : public folly::HHWheelTimer::Callback,
    * Check whether the connection has any requests outstanding.
    */
   virtual bool isBusy() const = 0;
+
+  /**
+   * Returns socket address of the peer
+   */
+  [[nodiscard]] virtual const folly::SocketAddress& getPeerAddress()
+      const noexcept = 0;
 
   /**
    * Get the idle time of the connection. If it returning 0, that means this
@@ -139,6 +162,18 @@ class ManagedConnection : public folly::HHWheelTimer::Callback,
   virtual folly::Optional<std::chrono::milliseconds>
   getLastActivityElapsedTime() const;
 
+  [[nodiscard]] std::chrono::steady_clock::time_point getCreationTime() const {
+    return creationTime_;
+  }
+
+  void setActivationState(ManagedConnection::ActivationState state) {
+    activationState_ = state;
+  }
+
+  const ManagedConnection::ActivationState& getActivationState() const {
+    return activationState_;
+  }
+
  protected:
   ~ManagedConnection() override;
 
@@ -158,9 +193,16 @@ class ManagedConnection : public folly::HHWheelTimer::Callback,
   }
 
   ConnectionManager* connectionManager_;
+  ConnectionAgeTimeout connectionAgeTimeout_;
   folly::Optional<std::chrono::steady_clock::time_point> latestActivity_;
 
+  const std::chrono::steady_clock::time_point creationTime_;
+
   folly::SafeIntrusiveListHook listHook_;
+
+  // When connection is created we can assume it to be in active state.
+  // it will only later can be moved to idle state.
+  ActivationState activationState_{ActivationState::IDLE};
 };
 
 std::ostream& operator<<(std::ostream& os, const ManagedConnection& conn);

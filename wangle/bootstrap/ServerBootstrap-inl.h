@@ -87,6 +87,13 @@ class ServerAcceptor : public Acceptor,
       pipeline_->setPipelineManager(this);
     }
 
+    explicit ServerConnection(
+        typename Pipeline::Ptr pipeline,
+        folly::SocketAddress peerAddress)
+        : pipeline_(std::move(pipeline)), peerAddress_(std::move(peerAddress)) {
+      pipeline_->setPipelineManager(this);
+    }
+
     void timeoutExpired() noexcept override {
       auto ew = folly::make_exception_wrapper<AcceptorException>(
           AcceptorException::ExceptionType::TIMED_OUT, "timeout");
@@ -132,12 +139,18 @@ class ServerAcceptor : public Acceptor,
       enableNotifyPendingShutdown_ = isEnabled;
     }
 
+    [[nodiscard]] const folly::SocketAddress& getPeerAddress()
+        const noexcept override {
+      return peerAddress_;
+    }
+
    private:
     ~ServerConnection() override {
       pipeline_->setPipelineManager(nullptr);
     }
     typename Pipeline::Ptr pipeline_;
     bool enableNotifyPendingShutdown_{false};
+    folly::SocketAddress peerAddress_;
   };
 
   explicit ServerAcceptor(
@@ -193,7 +206,8 @@ class ServerAcceptor : public Acceptor,
         std::shared_ptr<folly::AsyncTransport>(
             transport.release(), folly::DelayedDestruction::Destructor()));
     pipeline->setTransportInfo(tInfoPtr);
-    auto connection = new ServerConnection(std::move(pipeline));
+    auto connection =
+        new ServerConnection(std::move(pipeline), *connInfo.clientAddr);
     connection->setNotifyPendingShutdown(enableNotifyPendingShutdown_);
     Acceptor::addConnection(connection);
     connection->init();
@@ -248,6 +262,30 @@ class ServerAcceptor : public Acceptor,
 
     acceptPipeline_->readException(ew);
     Acceptor::dropConnections(pct);
+  }
+
+  void dropEstablishedConnections(
+      double pct,
+      const std::function<bool(ManagedConnection*)>& filter) noexcept override {
+    auto ew = folly::make_exception_wrapper<AcceptorException>(
+        AcceptorException::ExceptionType::DROP_CONN_PCT,
+        "dropping some established connections",
+        pct);
+
+    acceptPipeline_->readException(ew);
+    Acceptor::dropEstablishedConnections(pct, filter);
+  }
+
+  void dropIdleConnectionsBasedOnTimeout(
+      std::chrono::milliseconds targetIdleTimeMs,
+      const std::function<void(size_t)>& droppedConnectionsCB) override {
+    auto ew = folly::make_exception_wrapper<AcceptorException>(
+        AcceptorException::ExceptionType::DROP_CONN_PCT,
+        "dropping idle connections");
+
+    acceptPipeline_->readException(ew);
+    Acceptor::dropIdleConnectionsBasedOnTimeout(
+        targetIdleTimeMs, droppedConnectionsCB);
   }
 
   void forceStop() noexcept override {
@@ -342,7 +380,7 @@ class ServerWorkerPool : public folly::ThreadPoolExecutor::Observer {
  public:
   explicit ServerWorkerPool(
       std::shared_ptr<AcceptorFactory> acceptorFactory,
-      folly::IOThreadPoolExecutor* exec,
+      folly::IOThreadPoolExecutorBase* exec,
       std::shared_ptr<std::vector<std::shared_ptr<folly::AsyncSocketBase>>>
           sockets,
       std::shared_ptr<ServerSocketFactory> socketFactory)
@@ -358,6 +396,9 @@ class ServerWorkerPool : public folly::ThreadPoolExecutor::Observer {
   template <typename F>
   void forEachWorker(F&& f) const;
 
+  template <typename F>
+  void forRandomWorker(F&& f) const;
+
   void threadStarted(folly::ThreadPoolExecutor::ThreadHandle*) override;
   void threadStopped(folly::ThreadPoolExecutor::ThreadHandle*) override;
   void threadPreviouslyStarted(
@@ -370,14 +411,15 @@ class ServerWorkerPool : public folly::ThreadPoolExecutor::Observer {
   }
 
  private:
-  using WorkerMap = std::
-      map<folly::ThreadPoolExecutor::ThreadHandle*, std::shared_ptr<Acceptor>>;
+  using WorkerMap = std::vector<std::pair<
+      folly::ThreadPoolExecutor::ThreadHandle*,
+      std::shared_ptr<Acceptor>>>;
   using Mutex = folly::SharedMutexReadPriority;
 
   std::shared_ptr<WorkerMap> workers_;
   std::shared_ptr<Mutex> workersMutex_;
   std::shared_ptr<AcceptorFactory> acceptorFactory_;
-  folly::IOThreadPoolExecutor* exec_{nullptr};
+  folly::IOThreadPoolExecutorBase* exec_{nullptr};
   std::shared_ptr<std::vector<std::shared_ptr<folly::AsyncSocketBase>>>
       sockets_;
   std::shared_ptr<ServerSocketFactory> socketFactory_;
@@ -389,6 +431,13 @@ void ServerWorkerPool::forEachWorker(F&& f) const {
   for (const auto& kv : *workers_) {
     f(kv.second.get());
   }
+}
+
+template <typename F>
+void ServerWorkerPool::forRandomWorker(F&& f) const {
+  Mutex::ReadHolder holder(workersMutex_.get());
+  DCHECK(workers_->size());
+  f((*workers_)[folly::Random::rand32(workers_->size())].second.get());
 }
 
 class DefaultAcceptPipelineFactory : public AcceptPipelineFactory {

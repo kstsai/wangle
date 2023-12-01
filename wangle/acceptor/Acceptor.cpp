@@ -80,6 +80,7 @@ void Acceptor::init(
       peeker->setContext(std::move(context));
       peeker->options().setHandshakeRecordAlignedReads(
           accConfig_.fizzConfig.preferKTLS);
+      peeker->options().setPreferIoUringSocket(accConfig_.preferIoUring);
       securityProtocolCtxManager_.addPeeker(peeker);
     } else {
       securityProtocolCtxManager_.addPeeker(&defaultPeekingCallback_);
@@ -87,8 +88,11 @@ void Acceptor::init(
 
     if (!sslCtxManager_) {
       sslCtxManager_ = std::make_unique<SSLContextManager>(
-          "vip_" + getName(), accConfig_.strictSSL, stats);
+          "vip_" + getName(),
+          SSLContextManagerSettings().setStrict(accConfig_.strictSSL),
+          stats);
     }
+    getFizzPeeker()->setSSLContextManager(sslCtxManager_);
     try {
       // If the default ctx is nullptr, we can assume it hasn't been configured
       // yet.
@@ -96,6 +100,15 @@ void Acceptor::init(
         for (const auto& sslCtxConfig : accConfig_.sslContextConfigs) {
           sslCtxManager_->addSSLContextConfig(
               sslCtxConfig,
+              accConfig_.sslCacheOptions,
+              &accConfig_.initialTicketSeeds,
+              accConfig_.bindAddress,
+              cacheProvider_);
+        }
+        for (const auto& sniConfig : accConfig_.sniConfigs) {
+          sslCtxManager_->addSSLContextConfig(
+              sniConfig.snis,
+              sniConfig.contextConfig,
               accConfig_.sslCacheOptions,
               &accConfig_.initialTicketSeeds,
               accConfig_.bindAddress,
@@ -135,7 +148,10 @@ void Acceptor::initDownstreamConnectionManager(EventBase* eventBase) {
   base_ = eventBase;
   state_ = State::kRunning;
   downstreamConnectionManager_ = ConnectionManager::makeUnique(
-      eventBase, accConfig_.connectionIdleTimeout, this);
+      eventBase,
+      accConfig_.connectionIdleTimeout,
+      accConfig_.connectionAgeTimeout,
+      this);
 }
 
 std::shared_ptr<fizz::server::FizzServerContext> Acceptor::createFizzContext() {
@@ -204,11 +220,13 @@ void Acceptor::resetSSLContextConfigs(
     } else if (sslCtxManager_) {
       sslCtxManager_->resetSSLContextConfigs(
           accConfig_.sslContextConfigs,
+          accConfig_.sniConfigs,
           accConfig_.sslCacheOptions,
           nullptr,
           accConfig_.bindAddress,
           cacheProvider_);
     }
+    getFizzPeeker()->setSSLContextManager(sslCtxManager_);
   } catch (const std::runtime_error& ex) {
     LOG(ERROR) << "Failed to re-configure TLS: " << ex.what()
                << "will keep old config";
@@ -231,7 +249,7 @@ void Acceptor::setTLSTicketSecrets(
   }
 }
 
-void Acceptor::drainAllConnections() {
+void Acceptor::startDrainingAllConnections() {
   if (downstreamConnectionManager_) {
     downstreamConnectionManager_->initiateGracefulShutdown(
         gracefulShutdownTimeout_);
@@ -242,14 +260,29 @@ bool Acceptor::canAccept(const SocketAddress& /*address*/) {
   return true;
 }
 
+bool Acceptor::isPeerAddressAllowlisted(const SocketAddress& /*address*/) {
+  return true;
+}
+
 void Acceptor::connectionAccepted(
     folly::NetworkSocket fdNetworkSocket,
     const SocketAddress& clientAddr,
     AcceptInfo info) noexcept {
+  acceptConnection(fdNetworkSocket, clientAddr, info, nullptr);
+}
+
+void Acceptor::acceptConnection(
+    folly::NetworkSocket fdNetworkSocket,
+    const SocketAddress& clientAddr,
+    AcceptInfo info,
+    folly::AsyncSocket::LegacyLifecycleObserver* observer) noexcept {
   int fd = fdNetworkSocket.toFd();
 
   namespace fsp = folly::portability::sockets;
   if (!canAccept(clientAddr)) {
+    if (observer) {
+      observer->destroy(nullptr);
+    }
     // Send a RST to free kernel memory faster
     struct linger optLinger = {1, 0};
     fsp::setsockopt(fd, SOL_SOCKET, SO_LINGER, &optLinger, sizeof(optLinger));
@@ -261,24 +294,26 @@ void Acceptor::connectionAccepted(
     opt.first.apply(folly::NetworkSocket::fromFd(fd), opt.second);
   }
 
-  onDoneAcceptingConnection(fd, clientAddr, acceptTime, info);
+  onDoneAcceptingConnection(fd, clientAddr, acceptTime, info, observer);
 }
 
 void Acceptor::onDoneAcceptingConnection(
     int fd,
     const SocketAddress& clientAddr,
     std::chrono::steady_clock::time_point acceptTime,
-    const AcceptInfo& info) noexcept {
+    const AcceptInfo& info,
+    folly::AsyncSocket::LegacyLifecycleObserver* observer) noexcept {
   TransportInfo tinfo;
   tinfo.timeBeforeEnqueue = info.timeBeforeEnqueue;
-  processEstablishedConnection(fd, clientAddr, acceptTime, tinfo);
+  processEstablishedConnection(fd, clientAddr, acceptTime, tinfo, observer);
 }
 
 void Acceptor::processEstablishedConnection(
     int fd,
     const SocketAddress& clientAddr,
     std::chrono::steady_clock::time_point acceptTime,
-    TransportInfo& tinfo) noexcept {
+    TransportInfo& tinfo,
+    folly::AsyncSocket::LegacyLifecycleObserver* observer) noexcept {
   bool shouldDoSSL = false;
   if (accConfig_.isSSL()) {
     CHECK(sslCtxManager_);
@@ -287,6 +322,9 @@ void Acceptor::processEstablishedConnection(
   if (shouldDoSSL) {
     AsyncSSLSocket::UniquePtr sslSock(makeNewAsyncSSLSocket(
         sslCtxManager_->getDefaultSSLCtx(), base_, fd, &clientAddr));
+    if (observer) {
+      sslSock->addLifecycleObserver(observer);
+    }
     ++numPendingSSLConns_;
     if (numPendingSSLConns_ > accConfig_.maxConcurrentSSLHandshakes) {
       VLOG(2) << "dropped SSL handshake on " << accConfig_.name
@@ -310,6 +348,9 @@ void Acceptor::processEstablishedConnection(
     tinfo.secure = false;
     tinfo.acceptTime = acceptTime;
     AsyncSocket::UniquePtr sock(makeNewAsyncSocket(base_, fd, &clientAddr));
+    if (observer) {
+      sock->addLifecycleObserver(observer);
+    }
     tinfo.tfoSucceded = sock->getTFOSucceded();
     for (const auto& cb : observerList_.getAll()) {
       cb->accept(sock.get());
@@ -335,12 +376,12 @@ static std::string logContext(folly::AsyncTransport& transport) {
   int socketFd = -1;
   try {
     localAddr = transport.getLocalAddress().describe();
-  } catch (folly::AsyncSocketException& ex) {
+  } catch (folly::AsyncSocketException&) {
     localAddr = "(unknown)";
   }
   try {
     remoteAddr = transport.getPeerAddress().describe();
-  } catch (folly::AsyncSocketException& ex) {
+  } catch (folly::AsyncSocketException&) {
     remoteAddr = "(unknown)";
   }
 
@@ -354,28 +395,58 @@ static std::string logContext(folly::AsyncTransport& transport) {
 AsyncTransport::UniquePtr Acceptor::transformTransport(
     AsyncTransport::UniquePtr sock) {
   if constexpr (fizz::platformCapableOfKTLS) {
+    fizz::KTLSRxPad rxPad = accConfig_.fizzConfig.expectNoPadKTLSRx
+        ? fizz::KTLSRxPad::RxExpectNoPad
+        : fizz::KTLSRxPad::RxPadUnknown;
     if (accConfig_.fizzConfig.preferKTLS) {
-      std::string sockLogContext;
-      if (VLOG_IS_ON(5)) {
-        sockLogContext = logContext(*sock);
-      }
+      if (accConfig_.fizzConfig.preferKTLSRx) {
+        std::string sockLogContext;
+        if (VLOG_IS_ON(5)) {
+          sockLogContext = logContext(*sock);
+        }
 
-      auto fizzSocket =
-          sock->getUnderlyingTransport<fizz::server::AsyncFizzServer>();
-      if (!fizzSocket) {
-        VLOG(5) << "Acceptor configured to prefer kTLS, but peer is not fizz. "
-                << sockLogContext;
-        return sock;
-      }
-      auto ktlsSockResult = fizz::tryConvertKTLS(*fizzSocket);
-      if (ktlsSockResult.hasValue()) {
-        VLOG(5) << "Upgraded socket to kTLS. " << sockLogContext;
-        return std::move(ktlsSockResult).value();
+        auto fizzSocket =
+            sock->getUnderlyingTransport<fizz::server::AsyncFizzServer>();
+        if (!fizzSocket) {
+          VLOG(5)
+              << "Acceptor configured to prefer kTLS Rx, but peer is not fizz. "
+              << sockLogContext;
+          return sock;
+        }
+        auto ktlsRxSockResult = fizz::tryConvertKTLSRx(*fizzSocket, rxPad);
+        if (ktlsRxSockResult.hasValue()) {
+          VLOG(5) << "Upgraded socket to kTLS Rx. " << sockLogContext;
+          return std::move(ktlsRxSockResult).value();
+        } else {
+          VLOG(5) << "Failed to upgrade to kTLS Rx. ex="
+                  << folly::exceptionStr(ktlsRxSockResult.error()) << " "
+                  << sockLogContext;
+          return sock;
+        }
       } else {
-        VLOG(5) << "Failed to upgrade to kTLS. ex="
-                << folly::exceptionStr(ktlsSockResult.error()) << " "
-                << sockLogContext;
-        return sock;
+        std::string sockLogContext;
+        if (VLOG_IS_ON(5)) {
+          sockLogContext = logContext(*sock);
+        }
+
+        auto fizzSocket =
+            sock->getUnderlyingTransport<fizz::server::AsyncFizzServer>();
+        if (!fizzSocket) {
+          VLOG(5)
+              << "Acceptor configured to prefer kTLS, but peer is not fizz. "
+              << sockLogContext;
+          return sock;
+        }
+        auto ktlsSockResult = fizz::tryConvertKTLS(*fizzSocket, rxPad);
+        if (ktlsSockResult.hasValue()) {
+          VLOG(5) << "Upgraded socket to kTLS. " << sockLogContext;
+          return std::move(ktlsSockResult).value();
+        } else {
+          VLOG(5) << "Failed to upgrade to kTLS. ex="
+                  << folly::exceptionStr(ktlsSockResult.error()) << " "
+                  << sockLogContext;
+          return sock;
+        }
       }
     }
   }
@@ -396,9 +467,10 @@ void Acceptor::connectionReady(
   // Limit the number of reads from the socket per poll loop iteration,
   // both to keep memory usage under control and to prevent one fast-
   // writing client from starving other connections.
-  auto asyncSocket = sock->getUnderlyingTransport<AsyncSocket>();
-  asyncSocket->setMaxReadsPerEvent(accConfig_.socketMaxReadsPerEvent);
-  tinfo.initWithSocket(asyncSocket);
+  if (auto asyncSocket = sock->getUnderlyingTransport<AsyncSocket>()) {
+    asyncSocket->setMaxReadsPerEvent(accConfig_.socketMaxReadsPerEvent);
+    tinfo.initWithSocket(asyncSocket);
+  }
   tinfo.appProtocol = std::make_shared<std::string>(nextProtocolName);
 
   for (const auto& cb : observerList_.getAll()) {
@@ -435,7 +507,7 @@ void Acceptor::sslConnectionReady(
   connectionReady(
       std::move(sock), clientAddr, nextProtocol, secureTransportType, tinfo);
   if (state_ == State::kDraining) {
-    checkDrained();
+    checkIfDrained();
   }
 }
 
@@ -443,7 +515,7 @@ void Acceptor::sslConnectionError(const folly::exception_wrapper&) {
   CHECK(numPendingSSLConns_ > 0);
   --numPendingSSLConns_;
   if (state_ == State::kDraining) {
-    checkDrained();
+    checkIfDrained();
   }
 }
 
@@ -459,30 +531,32 @@ void Acceptor::acceptError(const std::exception& ex) noexcept {
 void Acceptor::acceptStopped() noexcept {
   VLOG(3) << "Acceptor " << this << " acceptStopped()";
   // Drain the open client connections
-  drainAllConnections();
+  startDrainingAllConnections();
 
   // If we haven't yet finished draining, begin doing so by marking ourselves
-  // as in the draining state. We must be sure to hit checkDrained() here, as
+  // as in the draining state. We must be sure to hit checkIfDrained() here, as
   // if we're completely idle, we can should consider ourself drained
   // immediately (as there is no outstanding work to complete to cause us to
   // re-evaluate this).
   if (state_ != State::kDone) {
     state_ = State::kDraining;
-    checkDrained();
+    checkIfDrained();
   }
 }
 
 void Acceptor::onEmpty(const ConnectionManager&) {
   VLOG(3) << "Acceptor=" << this << " onEmpty()";
   if (state_ == State::kDraining) {
-    checkDrained();
+    checkIfDrained();
   }
 }
 
-void Acceptor::checkDrained() {
+void Acceptor::checkIfDrained() {
   CHECK(state_ == State::kDraining);
   if (forceShutdownInProgress_ ||
-      (downstreamConnectionManager_->getNumConnections() != 0) ||
+      (downstreamConnectionManager_ &&
+       downstreamConnectionManager_->getNumConnections() != 0) ||
+
       (numPendingSSLConns_ != 0)) {
     return;
   }
@@ -491,10 +565,7 @@ void Acceptor::checkDrained() {
           << base_;
 
   downstreamConnectionManager_.reset();
-
-  state_ = State::kDone;
-
-  onConnectionsDrained();
+  transitionToDrained();
 }
 
 void Acceptor::drainConnections(double pctToDrain) {
@@ -514,7 +585,7 @@ milliseconds Acceptor::getConnTimeout() const {
 void Acceptor::addConnection(ManagedConnection* conn) {
   // Add the socket to the timeout manager so that it can be cleaned
   // up after being left idle for a long time.
-  downstreamConnectionManager_->addConnection(conn, true);
+  downstreamConnectionManager_->addConnection(conn, true, true);
 }
 
 void Acceptor::forceStop() {
@@ -533,8 +604,7 @@ void Acceptor::dropAllConnections() {
   }
   CHECK(numPendingSSLConns_ == 0);
 
-  state_ = State::kDone;
-  onConnectionsDrained();
+  transitionToDrained();
 }
 
 void Acceptor::dropConnections(double pctToDrop) {
@@ -545,7 +615,41 @@ void Acceptor::dropConnections(double pctToDrop) {
               << " in thread " << base_;
       assert(base_->isInEventBaseThread());
       forceShutdownInProgress_ = true;
+
       downstreamConnectionManager_->dropConnections(pctToDrop);
+    }
+  });
+}
+
+void Acceptor::dropEstablishedConnections(
+    double pctToDrop,
+    const std::function<bool(ManagedConnection*)>& filter) {
+  base_->runInEventBaseThread([this, pctToDrop, filter] {
+    if (downstreamConnectionManager_) {
+      VLOG(3) << "Dropping " << pctToDrop * 100 << "% of "
+              << getNumConnections()
+              << " established connections from Acceptor=" << this
+              << " in thread " << base_;
+      assert(base_->isInEventBaseThread());
+
+      downstreamConnectionManager_->dropEstablishedConnections(
+          pctToDrop, filter);
+    }
+  });
+}
+
+void Acceptor::dropIdleConnectionsBasedOnTimeout(
+    std::chrono::milliseconds targetIdleTimeMs,
+    const std::function<void(size_t)>& droppedConnectionsCB) {
+  base_->runInEventBaseThread([this, targetIdleTimeMs, droppedConnectionsCB] {
+    if (downstreamConnectionManager_) {
+      VLOG(3) << "Dropping connections based on idle timeout "
+              << targetIdleTimeMs.count() << " from acceptor=" << this
+              << " in thread " << base_;
+      assert(base_->isInEventBaseThread());
+
+      downstreamConnectionManager_->dropIdleConnectionsBasedOnTimeout(
+          targetIdleTimeMs, droppedConnectionsCB);
     }
   });
 }

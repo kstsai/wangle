@@ -17,6 +17,7 @@
 #pragma once
 
 #include <fizz/extensions/tokenbinding/Types.h>
+#include <fizz/protocol/AsyncFizzBase.h>
 #include <fizz/record/Types.h>
 
 namespace wangle {
@@ -35,10 +36,18 @@ struct FizzConfig {
   // fizz handshakes. This may or may not work depending on platform support
   // and connection parameters negotiated by the connection.
   bool preferKTLS{false};
+  // EXPERIMENTAL: Attempt to switch to kTLS Rx only
+  // Requires preferKTLS to be enabled
+  bool preferKTLSRx{false};
+  // EXPERIMENTAL: Attempt opportunistic zero-copy
+  // Requires preferKTLS to be enabled
+  bool expectNoPadKTLSRx{false};
 
   folly::Optional<uint16_t> maxRecord;
+  folly::Optional<uint16_t> paddingModulo;
   std::vector<fizz::CertificateCompressionAlgorithm>
       supportedCompressionAlgorithms;
+  fizz::AsyncFizzBase::TransportOptions transportOptions;
 };
 
 struct FizzClientConfig {

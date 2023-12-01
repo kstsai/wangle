@@ -79,7 +79,13 @@ class ConnectionManager : public folly::DelayedDestruction,
    */
   ConnectionManager(
       folly::EventBase* eventBase,
-      std::chrono::milliseconds timeout,
+      std::chrono::milliseconds idleTimeout,
+      Callback* callback = nullptr);
+
+  ConnectionManager(
+      folly::EventBase* eventBase,
+      std::chrono::milliseconds idleTimeout,
+      std::chrono::milliseconds connAgeTimeout,
       Callback* callback = nullptr);
 
   /**
@@ -90,7 +96,17 @@ class ConnectionManager : public folly::DelayedDestruction,
    * @param timeout        Whether to immediately register this connection
    *                         for an idle timeout callback.
    */
-  void addConnection(ManagedConnection* connection, bool timeout = false);
+  void addConnection(
+      ManagedConnection* connection,
+      bool idleTimeout = false,
+      bool connectionAgeTimeout = false);
+
+  /**
+   * Schedule a timeout callback for a connection age callback object.
+   */
+  void scheduleTimeout(
+      ConnectionAgeTimeout* callback,
+      std::chrono::milliseconds timeout);
 
   /**
    * Schedule a timeout callback for a connection.
@@ -139,9 +155,32 @@ class ConnectionManager : public folly::DelayedDestruction,
    */
   void dropConnections(double pct);
 
-  size_t getNumConnections() const {
-    return conns_.size();
-  }
+  /**
+   * Similar to dropConnections(double pct)  difference is that here
+   * we have a callback which will be called for every connection managed
+   * and connection will be dropped only if callback returns true
+   * Also dropConnection(double pct) is supposed to be used during shutdown
+   * while dropEstablishedConnections is used during runtime
+   */
+  void dropEstablishedConnections(
+      double pct,
+      const std::function<bool(ManagedConnection*)>& filter);
+
+  /**
+   * Returns total number of connections managed by this ConnectionManager.
+   * This includes active + idle connections.
+   */
+  size_t getNumConnections() const;
+
+  /**
+   * Returns number of active connections in the ConnectionManger.
+   */
+  size_t getNumActiveConnections() const;
+
+  /**
+   * Returns number of idle connection in the ConnectionManger.
+   */
+  size_t getNumIdleConnections() const;
 
   template <typename F>
   void forEachConnection(F func) {
@@ -151,7 +190,7 @@ class ConnectionManager : public folly::DelayedDestruction,
   }
 
   std::chrono::milliseconds getDefaultTimeout() const {
-    return timeout_;
+    return idleTimeout_;
   }
 
   std::chrono::milliseconds getIdleConnEarlyDropThreshold() const {
@@ -160,7 +199,7 @@ class ConnectionManager : public folly::DelayedDestruction,
 
   void setLoweredIdleTimeout(std::chrono::milliseconds timeout) {
     CHECK(timeout >= std::chrono::milliseconds(0));
-    CHECK(timeout <= timeout_);
+    CHECK(timeout <= idleTimeout_);
     idleConnEarlyDropThreshold_ = timeout;
   }
 
@@ -171,16 +210,17 @@ class ConnectionManager : public folly::DelayedDestruction,
   size_t dropIdleConnections(size_t num);
 
   /**
-   * dropActiveConnections is meant to be used when the host is under memory
-   * constraints. It drops active connections based on their last activity
-   * time. The idea is to prefer connections which are less active. A good
-   * example scenario of when this is useful is slowloris attack or in general
-   * connections which read/write at a very slow pace.
-   * Return the actual number of dropped idle connections.
+   * Drop conections based on idle timeout.
+   *
+   * @param targetIdleTimeMS The target idle timeout for all connections.
+   * @param droppedConnectionsCB Callback will be called at the end of the
+   *    method with number of dropped connections as input.
+   *
+   * @return Number of connections dropped.
    */
-  virtual size_t dropActiveConnections(
-      size_t num,
-      std::chrono::milliseconds inActivityThresholdTimeMs);
+  size_t dropIdleConnectionsBasedOnTimeout(
+      std::chrono::milliseconds targetIdleTimeMs,
+      const std::function<void(size_t)>& droppedConnectionsCB = [](size_t) {});
 
   /**
    * reportActivity is meant to be called when significant activity occurred on
@@ -197,7 +237,14 @@ class ConnectionManager : public folly::DelayedDestruction,
   void onDeactivated(ManagedConnection& conn) override;
 
  protected:
-  ~ConnectionManager() override = default;
+  ~ConnectionManager() override {
+    // These timeouts are expected to be canceled in the event base thread, so
+    // we attempt to enforce this.
+    if (drainHelper_.isScheduled()) {
+      eventBase_->runImmediatelyOrRunInEventBaseThreadAndWait(
+          [this]() { drainHelper_.cancelTimeout(); });
+    }
+  }
 
  private:
   enum class ShutdownState : uint8_t {
@@ -317,7 +364,12 @@ class ConnectionManager : public folly::DelayedDestruction,
    * the default idle timeout for downstream sessions when no system resource
    * limit is reached
    */
-  std::chrono::milliseconds timeout_;
+  std::chrono::milliseconds idleTimeout_;
+
+  /**
+   * connection age timeout
+   */
+  std::chrono::milliseconds connectionAgeTimeout_;
 
   /**
    * The idle connections can be closed earlier that their idle timeout when any
@@ -329,6 +381,7 @@ class ConnectionManager : public folly::DelayedDestruction,
    * time is less than idleConnEarlyDropThreshold_.
    */
   std::chrono::milliseconds idleConnEarlyDropThreshold_;
-};
 
+  size_t idleConnections_{0};
+};
 } // namespace wangle

@@ -213,6 +213,16 @@ struct TransportInfo {
    */
   int64_t totalBytes{0};
 
+  /*
+   * total number of packets sent over the connection
+   */
+  int64_t totalPackets{-1};
+
+  /*
+   * total number of packets marked lost over the connection
+   */
+  int64_t totalPacketsLost{-1};
+
   /**
    * the address of the remote side. If this is associated with a client socket,
    * it is a server side address. Otherwise, it is a client side address.
@@ -331,6 +341,12 @@ struct TransportInfo {
    * initialize the fields related with tcp_info
    */
   bool initWithSocket(const folly::AsyncSocket* sock);
+
+  /*
+   * Stores status of ech request.
+   * May hold the following values: { "Not requested", "Rejected", "Accepted" }
+   */
+  std::string echStatus;
 
 #if defined(__linux__) || defined(__FreeBSD__)
   /*

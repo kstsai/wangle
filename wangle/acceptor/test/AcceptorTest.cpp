@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include <folly/experimental/TestUtil.h>
 #include <folly/io/async/EventBase.h>
 #include <folly/io/async/test/AsyncSSLSocketTest.h>
 #include <folly/portability/GMock.h>
@@ -25,6 +26,7 @@
 using namespace folly;
 using namespace wangle;
 using namespace testing;
+using folly::test::find_resource;
 
 class TestConnection : public wangle::ManagedConnection {
  public:
@@ -39,6 +41,12 @@ class TestConnection : public wangle::ManagedConnection {
     delete this;
   }
   void dumpConnectionState(uint8_t /*loglevel*/) override {}
+
+  const folly::SocketAddress& getPeerAddress() const noexcept override {
+    return dummyAddress;
+  }
+
+  folly::SocketAddress dummyAddress;
 };
 
 class TestAcceptor : public Acceptor {
@@ -58,6 +66,10 @@ class TestAcceptor : public Acceptor {
 
   DefaultToFizzPeekingCallback* getFizzPeeker() override {
     return Acceptor::getFizzPeeker();
+  }
+
+  void stop() {
+    acceptStopped();
   }
 };
 
@@ -104,14 +116,18 @@ class AcceptorTest : public ::testing::TestWithParam<TestSSLConfig> {
   }
 
   static std::shared_ptr<folly::SSLContext> getTestSslContext() {
-    auto sslContext = std::make_shared<folly::SSLContext>();
+    auto sslContext = std::make_shared<folly::SSLContext>(
+        folly::SSLContext::SSLVersion::TLSv1_2);
     TestSSLConfig testConfig = GetParam();
     if (testConfig == TestSSLConfig::SSL) {
-      sslContext->loadCertKeyPairFromFiles(folly::kTestCert, folly::kTestKey);
+      sslContext->loadCertKeyPairFromFiles(
+          find_resource(folly::test::kTestCert).c_str(),
+          find_resource(folly::test::kTestKey).c_str());
     } else if (testConfig == TestSSLConfig::SSL_MULTI_CA) {
       // Use a different cert.
       sslContext->loadCertKeyPairFromFiles(
-          folly::kClientTestCert, folly::kClientTestKey);
+          find_resource(folly::test::kClientTestCert).c_str(),
+          find_resource(folly::test::kClientTestKey).c_str());
     }
     sslContext->setOptions(SSL_OP_NO_TICKET);
     sslContext->ciphers("ALL:!ADH:!LOW:!EXP:!MD5:@STRENGTH");
@@ -121,12 +137,16 @@ class AcceptorTest : public ::testing::TestWithParam<TestSSLConfig> {
   static wangle::SSLContextConfig getTestSslContextConfig() {
     wangle::SSLContextConfig sslCtxConfig;
     TestSSLConfig testConfig = GetParam();
-    sslCtxConfig.setCertificate(folly::kTestCert, folly::kTestKey, "");
+    sslCtxConfig.setCertificate(
+        find_resource(folly::test::kTestCert).string(),
+        find_resource(folly::test::kTestKey).string(),
+        "");
     if (testConfig == TestSSLConfig::SSL_MULTI_CA) {
-      sslCtxConfig.clientCAFiles =
-          std::vector<std::string>{folly::kTestCA, folly::kClientTestCA};
+      sslCtxConfig.clientCAFiles = std::vector<std::string>{
+          find_resource(folly::test::kTestCA).string(),
+          find_resource(folly::test::kClientTestCA).string()};
     } else {
-      sslCtxConfig.clientCAFile = folly::kTestCA;
+      sslCtxConfig.clientCAFile = find_resource(folly::test::kTestCA).string();
     }
     sslCtxConfig.sessionContext = "AcceptorTest";
     sslCtxConfig.isDefault = true;
@@ -172,17 +192,18 @@ class MockAcceptObserver : public AcceptObserver {
   MOCK_METHOD(void, observerDetach, (Acceptor* const), (noexcept));
 };
 
-class MockAsyncSocketLifecycleObserver : public AsyncSocket::LifecycleObserver {
+class MockAsyncSocketLifecycleObserver
+    : public AsyncSocket::LegacyLifecycleObserver {
  public:
-  MOCK_METHOD(void, observerAttach, (AsyncTransport*), (noexcept));
-  MOCK_METHOD(void, observerDetach, (AsyncTransport*), (noexcept));
-  MOCK_METHOD(void, destroy, (AsyncTransport*), (noexcept));
-  MOCK_METHOD(void, close, (AsyncTransport*), (noexcept));
-  MOCK_METHOD(void, connect, (AsyncTransport*), (noexcept));
+  MOCK_METHOD(void, observerAttach, (AsyncSocket*), (noexcept));
+  MOCK_METHOD(void, observerDetach, (AsyncSocket*), (noexcept));
+  MOCK_METHOD(void, destroy, (AsyncSocket*), (noexcept));
+  MOCK_METHOD(void, close, (AsyncSocket*), (noexcept));
+  MOCK_METHOD(void, connect, (AsyncSocket*), (noexcept));
   MOCK_METHOD(void, fdDetach, (AsyncSocket*), (noexcept));
   MOCK_METHOD(void, move, (AsyncSocket*, AsyncSocket*), (noexcept));
-  MOCK_METHOD(void, evbAttach, (AsyncTransport*, EventBase*), (noexcept));
-  MOCK_METHOD(void, evbDetach, (AsyncTransport*, EventBase*), (noexcept));
+  MOCK_METHOD(void, evbAttach, (AsyncSocket*, EventBase*), (noexcept));
+  MOCK_METHOD(void, evbDetach, (AsyncSocket*, EventBase*), (noexcept));
 };
 
 class MockFizzLoggingCallback : public FizzLoggingCallback {
@@ -424,18 +445,25 @@ TEST_P(AcceptorTest, AcceptObserverStopAcceptorThenRemoveCallback) {
   Mock::VerifyAndClearExpectations(cb.get());
 }
 
+TEST_P(AcceptorTest, AcceptDrain) {
+  ServerSocketConfig config;
+  TestAcceptor acceptor(config);
+  acceptor.stop();
+}
+
 /**
- * Test if AsyncSocket::LifecycleObserver can track socket during SSL accept.
+ * Test if AsyncSocket::LegacyLifecycleObserver can track socket during SSL
+ * accept.
  *
  * With Fizz support, the accept process involves transforming the AsyncSocket
  * to an AsyncFizzServer. Then, if Fizz falls back to OpenSSL, the
  * AsyncFizzServer will be transformed into an AsyncSSLSocket.
  *
- * During each transformation, the LifecycleObserver::move callback must be
- * triggered so that the observer can unsubscribe from events on the old socket
- * and subscribe to events on the new socket. This requires Wangle and Fizz to
- * use the AsyncSocket(AsyncSocket* oldSocket) constructor when performing the
- * transformation.
+ * During each transformation, the LegacyLifecycleObserver::move callback must
+ * be triggered so that the observer can unsubscribe from events on the old
+ * socket and subscribe to events on the new socket. This requires Wangle and
+ * Fizz to use the AsyncSocket(AsyncSocket* oldSocket) constructor when
+ * performing the transformation.
  *
  * This test ensures that even in the worst case, where two transformations
  * occur, that the observer will be able to track the socket through to the
@@ -458,7 +486,20 @@ TEST_P(
   // add connection, expect callbacks
   SocketAddress serverAddress;
   serverSocket->getAddress(&serverAddress);
-  auto clientSocket = connectClientSocket(serverAddress);
+
+  AsyncSocket::UniquePtr clientSocket;
+  TestSSLConfig testConfig = GetParam();
+  if (testConfig == TestSSLConfig::SSL ||
+      testConfig == TestSSLConfig::SSL_MULTI_CA) {
+    auto sslContext = getTestSslContext();
+    // fallback from Fizz only occurs with TLS 1.2
+    sslContext->disableTLS13();
+    clientSocket = AsyncSSLSocket::newSocket(std::move(sslContext), &evb_);
+    clientSocket->connect(nullptr, serverAddress);
+  } else {
+    clientSocket = AsyncSocket::newSocket(&evb_, serverAddress);
+  }
+
   folly::AsyncTransport* remoteSocket = nullptr;
 
   // we have to EXPECT_EQ below instead of matchers because the remoteSocket
@@ -469,12 +510,16 @@ TEST_P(
       .InSequence(s1)
       .WillOnce(Invoke([&lifecycleCb, &remoteSocket](auto socket) {
         remoteSocket = socket;
-        EXPECT_CALL(*lifecycleCb, observerAttach(socket));
-        socket->addLifecycleObserver(lifecycleCb.get());
+        if (auto asyncSocket =
+                socket->template getUnderlyingTransport<folly::AsyncSocket>()) {
+          EXPECT_CALL(*lifecycleCb, observerAttach(asyncSocket));
+          const_cast<folly::AsyncSocket*>(asyncSocket)
+              ->addLifecycleObserver(lifecycleCb.get());
+        }
       }));
 
-  if (GetParam() == TestSSLConfig::SSL ||
-      GetParam() == TestSSLConfig::SSL_MULTI_CA) {
+  if (testConfig == TestSSLConfig::SSL ||
+      testConfig == TestSSLConfig::SSL_MULTI_CA) {
     // AsyncSocket -> AsyncFizzServer
     EXPECT_CALL(*lifecycleCb, fdDetach(_))
         .InSequence(s1)
@@ -564,13 +609,16 @@ TEST_P(
   // the socket will be ready, and then immediately close
   EXPECT_CALL(*onAcceptCb, ready(_))
       .InSequence(s1)
-      .WillOnce(
-          Invoke([&lifecycleCb, &remoteSocket](const auto* const& socket) {
-            EXPECT_EQ(remoteSocket, socket);
-            EXPECT_THAT(
-                socket->getLifecycleObservers(),
-                UnorderedElementsAre(lifecycleCb.get()));
-          }));
+      .WillOnce(Invoke([&lifecycleCb,
+                        &remoteSocket](const auto* const& socket) {
+        EXPECT_EQ(remoteSocket, socket);
+        if (auto asyncSocket =
+                socket->template getUnderlyingTransport<folly::AsyncSocket>()) {
+          EXPECT_THAT(
+              asyncSocket->getLifecycleObservers(),
+              UnorderedElementsAre(lifecycleCb.get()));
+        }
+      }));
   EXPECT_CALL(*lifecycleCb, close(_))
       .InSequence(s1)
       .WillOnce(Invoke([&remoteSocket](const auto* const& socket) {

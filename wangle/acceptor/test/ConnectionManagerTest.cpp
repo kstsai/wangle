@@ -32,12 +32,13 @@ class MockConnection : public ManagedConnection {
   using Mock = StrictMock<MockConnection>;
   using UniquePtr = folly::DelayedDestructionUniquePtr<Mock>;
 
-  static UniquePtr makeUnique(ConnectionManagerTest* test) {
-    UniquePtr p(new StrictMock<MockConnection>(test));
+  static UniquePtr makeUnique(ConnectionManagerTest* test, int num = -1) {
+    UniquePtr p(new StrictMock<MockConnection>(test, num));
     return p;
   }
 
-  explicit MockConnection(ConnectionManagerTest* test) : test_(test) {
+  explicit MockConnection(ConnectionManagerTest* test, int identifier)
+      : test_(test), identifier_{identifier} {
     EXPECT_CALL(*this, isBusy()).WillRepeatedly(Return(false));
     EXPECT_CALL(*this, dumpConnectionState(testing::_))
         .WillRepeatedly(Return());
@@ -67,6 +68,12 @@ class MockConnection : public ManagedConnection {
   MOCK_METHOD1(dumpConnectionState, void(uint8_t));
   MOCK_METHOD2(drainConnections, void(double, std::chrono::milliseconds));
 
+  const folly::SocketAddress& getPeerAddress() const noexcept override {
+    return dummyAddress;
+  }
+
+  folly::SocketAddress dummyAddress;
+
   void setIdle(bool idle) {
     idle_ = idle;
     closeWhenIdleImpl();
@@ -77,6 +84,7 @@ class MockConnection : public ManagedConnection {
   ConnectionManagerTest* test_{nullptr};
   bool idle_{false};
   bool closeWhenIdle_{false};
+  int identifier_{-1};
 };
 
 class ConnectionManagerTest : public testing::Test {
@@ -91,7 +99,7 @@ class ConnectionManagerTest : public testing::Test {
 
   void addConns(uint64_t n) {
     for (size_t i = 0; i < n; i++) {
-      conns_.insert(conns_.begin(), MockConnection::makeUnique(this));
+      conns_.insert(conns_.begin(), MockConnection::makeUnique(this, i));
       cm_->addConnection(conns_.front().get());
     }
   }
@@ -122,10 +130,14 @@ void MockConnection::closeWhenIdleImpl() {
 TEST_F(ConnectionManagerTest, testShutdownSequence) {
   InSequence enforceOrder;
 
+  EXPECT_EQ(cm_->getNumActiveConnections(), 65);
   // activate one connection, it should not be exempt from notifyPendingShutdown
   cm_->onActivated(*conns_.front());
+  EXPECT_EQ(cm_->getNumActiveConnections(), 65);
   // make sure the idleIterator points to !end
   cm_->onDeactivated(*conns_.back());
+  EXPECT_EQ(cm_->getNumIdleConnections(), 1);
+  EXPECT_EQ(cm_->getNumActiveConnections(), 64);
   for (const auto& conn : conns_) {
     EXPECT_CALL(*conn, notifyPendingShutdown());
   }
@@ -144,6 +156,7 @@ TEST_F(ConnectionManagerTest, testRemoveDrainIterator) {
 
   // activate one connection, it should not be exempt from notifyPendingShutdown
   cm_->onActivated(*conns_.front());
+  EXPECT_EQ(cm_->getNumActiveConnections(), 66);
   for (size_t i = 0; i < conns_.size() - 1; i++) {
     EXPECT_CALL(*conns_[i], notifyPendingShutdown());
   }
@@ -152,10 +165,10 @@ TEST_F(ConnectionManagerTest, testRemoveDrainIterator) {
   eventBase_.runInLoop([&] {
     // deactivate the drain iterator
     cm_->onDeactivated(*conn65);
+    EXPECT_EQ(cm_->getNumIdleConnections(), 1);
     // remove the drain iterator
     cm_->removeConnection(conn66);
-    // deactivate the new drain iterator, now it's the end of the list
-    cm_->onDeactivated(*conn65);
+    EXPECT_EQ(cm_->getNumIdleConnections(), 1);
   });
   cm_->initiateGracefulShutdown(std::chrono::milliseconds(50));
   // Schedule a loop callback to remove the connection pointed to by the drain
@@ -193,12 +206,132 @@ TEST_F(ConnectionManagerTest, testIdleGraceTimeout) {
 TEST_F(ConnectionManagerTest, testDropAll) {
   InSequence enforceOrder;
 
+  EXPECT_EQ(cm_->getNumActiveConnections(), 65);
   for (const auto& conn : conns_) {
     EXPECT_CALL(*conn, dropConnection(_))
         .WillOnce(Invoke(
             [&](const std::string&) { cm_->removeConnection(conn.get()); }));
   }
+  EXPECT_EQ(cm_->getNumIdleConnections(), 0);
   cm_->dropAllConnections();
+  EXPECT_EQ(cm_->getNumActiveConnections(), 0);
+  EXPECT_EQ(cm_->getNumIdleConnections(), 0);
+}
+
+TEST_F(ConnectionManagerTest, testDropEstablishedFilterDropAll) {
+  for (const auto& conn : conns_) {
+    EXPECT_CALL(*conn, dropConnection(_))
+        .WillOnce(Invoke(
+            [&](const std::string&) { cm_->removeConnection(conn.get()); }));
+  }
+
+  // We want to drop 100% of the connections and filter returns true all the
+  // time as a result we should drop all the requests
+  cm_->dropEstablishedConnections(1, [](ManagedConnection* managedConn) {
+    (void)managedConn->getPeerAddress();
+    return true;
+  });
+}
+
+TEST_F(ConnectionManagerTest, testDropEstablishedVerifyOrder) {
+  std::vector<int> identifiers;
+  for (const auto& conn : conns_) {
+    EXPECT_CALL(*conn, dropConnection(_))
+        .WillOnce(Invoke([&](const std::string&) {
+          identifiers.push_back(conn.get()->identifier_);
+          cm_->removeConnection(conn.get());
+        }));
+  }
+
+  // We want to drop 100% of the connections and filter returns true all the
+  // time as a result we should drop all the requests
+  cm_->dropEstablishedConnections(1, [](ManagedConnection* managedConn) {
+    (void)managedConn->getPeerAddress();
+    return true;
+  });
+
+  // Initially connection will be added in decreasing order highest to lowest,
+  // it will be N, N - 1, N - 2, ..., 1, 0, thats because we loop from (0, N)
+  // and push items at the begining of the loop. During drop connections we
+  // start from last item which will be lowest and we push them back to
+  // identifiers vector, meaning everything will be sorted in increasing order
+  ASSERT_TRUE(identifiers.size() >= 2);
+  for (int i = 1; i < identifiers.size(); i++) {
+    ASSERT_TRUE(identifiers[i] > identifiers[i - 1]);
+  }
+}
+
+TEST_F(ConnectionManagerTest, testDropFilterDropNone) {
+  EXPECT_EQ(cm_->getNumActiveConnections(), 65);
+  for (const auto& conn : conns_) {
+    EXPECT_CALL(*conn, dropConnection(_)).Times(0);
+  }
+
+  // We want to drop 100% of the connections but filter returns false all the
+  // time as a result we should see zero dropped connection
+  cm_->dropEstablishedConnections(1, [](ManagedConnection* managedConn) {
+    (void)managedConn->getPeerAddress();
+    return false;
+  });
+  EXPECT_EQ(cm_->getNumActiveConnections(), 65);
+}
+
+TEST_F(ConnectionManagerTest, testDropFilterDropHalfOnly) {
+  EXPECT_EQ(cm_->getNumActiveConnections(), 65);
+  std::vector<int> identifiers{1, 4, 10, 30};
+  auto containsIdentifier = [&identifiers](int num) {
+    return std::find(identifiers.begin(), identifiers.end(), num) !=
+        identifiers.end();
+  };
+
+  for (const auto& conn : conns_) {
+    if (containsIdentifier(conn->identifier_)) {
+      EXPECT_CALL(*conn, dropConnection(_))
+          .WillOnce(Invoke(
+              [&](const std::string&) { cm_->removeConnection(conn.get()); }));
+    }
+  }
+
+  auto filter = [&containsIdentifier](ManagedConnection* managedConn) -> bool {
+    (void)managedConn->getPeerAddress();
+    MockConnection* mockConn = dynamic_cast<MockConnection*>(managedConn);
+    if (containsIdentifier(mockConn->identifier_)) {
+      return true;
+    }
+    return false;
+  };
+
+  cm_->dropEstablishedConnections(1, filter);
+  EXPECT_EQ(cm_->getNumActiveConnections(), 61);
+}
+
+// We call onDeactivated on connection with identifier 30, as a result this
+// connection will be moved at the end of the list and if the idleIterator_ is
+// conn_.end() it will decremented and now will be standing at connection (30)
+// then we start dropping everything but we make sure that we don't drop
+// connection 30 because thats where idleIterator_ is located
+TEST_F(ConnectionManagerTest, testDropFilterTraverseTillIdleIterator) {
+  for (const auto& conn : conns_) {
+    if (conn->identifier_ == 30) {
+      cm_->onDeactivated(*conn);
+    }
+  }
+
+  for (const auto& conn : conns_) {
+    if (conn->identifier_ == 30) {
+      EXPECT_CALL(*conn, dropConnection(_)).Times(0);
+    } else {
+      EXPECT_CALL(*conn, dropConnection(_))
+          .WillOnce(Invoke(
+              [&](const std::string&) { cm_->removeConnection(conn.get()); }));
+    }
+  }
+
+  auto filter = [](ManagedConnection* managedConn) -> bool {
+    (void)managedConn->getPeerAddress();
+    return true;
+  };
+  cm_->dropEstablishedConnections(1, filter);
 }
 
 TEST_F(ConnectionManagerTest, testDropPercent) {
@@ -212,6 +345,7 @@ TEST_F(ConnectionManagerTest, testDropPercent) {
     removeConn(conns_.begin()->get());
   }
   EXPECT_EQ(100, cm_->getNumConnections());
+  EXPECT_EQ(100, cm_->getNumActiveConnections());
 
   // Drop 20% of connections.
   double pct = 0.2;
@@ -227,6 +361,7 @@ TEST_F(ConnectionManagerTest, testDropPercent) {
   // Make sure they are gone.
   EXPECT_EQ(0, numToDrop);
   EXPECT_EQ(80, cm_->getNumConnections());
+  EXPECT_EQ(cm_->getNumActiveConnections(), 80);
 
   // Then drop 50% of the remaining 80 connections.
   pct = 0.5;
@@ -241,6 +376,7 @@ TEST_F(ConnectionManagerTest, testDropPercent) {
   // Make sure those are gone as well.
   EXPECT_EQ(0, numToDrop);
   EXPECT_EQ(40, cm_->getNumConnections());
+  EXPECT_EQ(40, cm_->getNumActiveConnections());
 }
 
 TEST_F(ConnectionManagerTest, testDrainPercent) {
@@ -314,6 +450,101 @@ TEST_F(ConnectionManagerTest, testDropIdle) {
         .WillRepeatedly(Return(std::chrono::milliseconds(100)));
   }
 
+  int idleCount_{0};
+  // Mark the first half of the connections idle
+  for (size_t i = 0; i < conns_.size() / 2; i++) {
+    EXPECT_EQ(cm_->getNumIdleConnections(), idleCount_);
+    cm_->onDeactivated(*conns_[i]);
+    idleCount_++;
+  }
+  EXPECT_EQ(
+      idleCount_, cm_->getNumConnections() - cm_->getNumActiveConnections());
+  // reactivate conn 0
+  cm_->onActivated(*conns_[0]);
+  EXPECT_EQ(cm_->getNumIdleConnections(), idleCount_ - 1);
+  // remove the first idle conn
+  cm_->removeConnection(conns_[1].get());
+  // Given we reactivated idle connection we expect number of idle connections
+  // to be one less than before
+  EXPECT_EQ(cm_->getNumIdleConnections(), idleCount_ - 2);
+
+  InSequence enforceOrder;
+
+  // Expect the remaining idle conns to drop
+  for (size_t i = 2; i < conns_.size() / 2; i++) {
+    EXPECT_CALL(*conns_[i], dropConnection(_))
+        .WillOnce(Invoke([this, i](const std::string&) {
+          cm_->removeConnection(conns_[i].get());
+        }));
+  }
+
+  cm_->dropIdleConnections(conns_.size());
+}
+
+TEST_F(ConnectionManagerTest, testDropIdleConnectionsBasedOnIdleTimeDropAll) {
+  // Make every connection to be idle for 100 milliseconds
+  for (const auto& conn : conns_) {
+    EXPECT_CALL(*conn, getIdleTime())
+        .WillRepeatedly(Return(std::chrono::milliseconds(100)));
+  }
+
+  // Mark every connection idle
+  for (size_t i = 0; i < conns_.size(); i++) {
+    cm_->onDeactivated(*conns_[i]);
+  }
+
+  InSequence enforceOrder;
+
+  // Expect every connection to be dropped
+  for (size_t i = 0; i < conns_.size(); i++) {
+    EXPECT_CALL(*conns_[i], dropConnection(_))
+        .WillOnce(Invoke([this, i](const std::string&) {
+          cm_->removeConnection(conns_[i].get());
+        }));
+  }
+
+  bool callbackCalled{false};
+  cm_->dropIdleConnectionsBasedOnTimeout(
+      std::chrono::milliseconds(99),
+      [this, &callbackCalled](size_t numConnectionsDropped) {
+        EXPECT_EQ(numConnectionsDropped, conns_.size());
+        callbackCalled = true;
+      });
+  EXPECT_TRUE(callbackCalled);
+}
+
+TEST_F(ConnectionManagerTest, testDropIdleConnectionsBasedOnIdleTimeDropNone) {
+  // Make every connection to be able for 100 milliseconds
+  for (const auto& conn : conns_) {
+    EXPECT_CALL(*conn, getIdleTime())
+        .WillRepeatedly(Return(std::chrono::milliseconds(100)));
+  }
+
+  // Mark every connection idle
+  for (size_t i = 0; i < conns_.size(); i++) {
+    cm_->onDeactivated(*conns_[i]);
+  }
+
+  InSequence enforceOrder;
+
+  // Expect no connection to be dropped
+  for (size_t i = 0; i < conns_.size(); i++) {
+    EXPECT_CALL(*conns_[i], dropConnection(_)).Times(0);
+  }
+
+  cm_->dropIdleConnectionsBasedOnTimeout(
+      std::chrono::milliseconds(100), [](size_t numConnectionsDropped) {
+        EXPECT_EQ(numConnectionsDropped, 0);
+      });
+}
+
+TEST_F(ConnectionManagerTest, testDropIdleConnectionsBasedOnIdleTimeDropHalf) {
+  for (const auto& conn : conns_) {
+    // Set everyone to be idle for 100ms
+    EXPECT_CALL(*conn, getIdleTime())
+        .WillRepeatedly(Return(std::chrono::milliseconds(100)));
+  }
+
   // Mark the first half of the connections idle
   for (size_t i = 0; i < conns_.size() / 2; i++) {
     cm_->onDeactivated(*conns_[i]);
@@ -333,37 +564,52 @@ TEST_F(ConnectionManagerTest, testDropIdle) {
         }));
   }
 
-  cm_->dropIdleConnections(conns_.size());
+  bool callbackCalled{false};
+  cm_->dropIdleConnectionsBasedOnTimeout(
+      std::chrono::milliseconds(99),
+      [this, &callbackCalled](size_t numConnectionsDropped) {
+        EXPECT_EQ(numConnectionsDropped, conns_.size() / 2 - 2);
+        callbackCalled = true;
+      });
+  EXPECT_TRUE(callbackCalled);
 }
 
-TEST_F(ConnectionManagerTest, testDropActive) {
-  for (const auto& conn : conns_) {
+TEST_F(ConnectionManagerTest, testDropIdleConnectionsBasedOnIdleTimeEarlyStop) {
+  size_t halfConnectionsSize = conns_.size() / 2;
+  for (size_t i = halfConnectionsSize; i < conns_.size(); i++) {
+    EXPECT_CALL(*conns_[i], getIdleTime())
+        .WillRepeatedly(Return(std::chrono::milliseconds(10)));
+  }
+
+  for (size_t i = 0; i < halfConnectionsSize; i++) {
     // Set everyone to be idle for 100ms
-    EXPECT_CALL(*conn, getLastActivityElapsedTime())
+    EXPECT_CALL(*conns_[i], getIdleTime())
         .WillRepeatedly(Return(std::chrono::milliseconds(100)));
   }
 
-  // Mark the first half of the connections idle
+  // Mark every connection idle
   for (size_t i = 0; i < conns_.size(); i++) {
-    if (i < conns_.size() / 2) {
-      cm_->onDeactivated(*conns_[i]);
-    } else {
-      cm_->onActivated(*conns_[i]);
-    }
+    cm_->onDeactivated(*conns_[i]);
   }
-  // remove the first idle conn
-  cm_->removeConnection(conns_[1].get());
 
   InSequence enforceOrder;
 
-  // Expect all active connections to be dropped
-  for (size_t i = conns_.size() / 2; i < conns_.size(); i++) {
+  // Expect the remaining idle conns to drop
+  for (size_t i = 0; i < halfConnectionsSize; i++) {
     EXPECT_CALL(*conns_[i], dropConnection(_))
         .WillOnce(Invoke([this, i](const std::string&) {
           cm_->removeConnection(conns_[i].get());
         }));
   }
-  cm_->dropActiveConnections(conns_.size(), std::chrono::milliseconds(50));
+
+  bool callbackCalled{false};
+  cm_->dropIdleConnectionsBasedOnTimeout(
+      std::chrono::milliseconds(99),
+      [halfConnectionsSize, &callbackCalled](size_t numConnectionsDropped) {
+        EXPECT_EQ(numConnectionsDropped, halfConnectionsSize);
+        callbackCalled = true;
+      });
+  EXPECT_TRUE(callbackCalled);
 }
 
 TEST_F(ConnectionManagerTest, testAddDuringShutdown) {

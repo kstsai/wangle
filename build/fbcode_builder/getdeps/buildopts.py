@@ -10,13 +10,13 @@ import os
 import subprocess
 import sys
 import tempfile
-from typing import Optional, Mapping
+from typing import Mapping, Optional
 
 from .copytree import containing_repo_type
-from .envfuncs import Env, add_flag, add_path_entry
+from .envfuncs import add_flag, add_path_entry, Env
 from .fetcher import get_fbsource_repo_data, homebrew_package_prefix
 from .manifest import ContextGenerator
-from .platform import HostType, is_windows, get_available_ram
+from .platform import get_available_ram, HostType, is_windows
 
 
 def detect_project(path):
@@ -51,6 +51,7 @@ class BuildOptions(object):
         lfs_path=None,
         shared_libs: bool = False,
         facebook_internal=None,
+        free_up_disk: bool = False,
     ) -> None:
         """fbcode_builder_dir - the path to either the in-fbsource fbcode_builder dir,
                              or for shipit-transformed repos, the build dir that
@@ -65,6 +66,7 @@ class BuildOptions(object):
         use_shipit - use real shipit instead of the simple shipit transformer
         vcvars_path - Path to external VS toolchain's vsvarsall.bat
         shared_libs - whether to build shared libraries
+        free_up_disk - take extra actions to save runner disk space
         """
 
         if not install_dir:
@@ -83,7 +85,7 @@ class BuildOptions(object):
         # If we are running from an fbsource repository, set self.fbsource_dir
         # to allow the ShipIt-based fetchers to use it.
         if self.repo_project == "fbsource":
-            self.fbsource_dir = self.repo_root
+            self.fbsource_dir: Optional[str] = self.repo_root
         else:
             self.fbsource_dir = None
 
@@ -103,6 +105,7 @@ class BuildOptions(object):
         self.allow_system_packages = allow_system_packages
         self.lfs_path = lfs_path
         self.shared_libs = shared_libs
+        self.free_up_disk = free_up_disk
 
         lib_path = None
         if self.is_darwin():
@@ -602,6 +605,7 @@ def setup_build_options(args, host_type=None) -> BuildOptions:
             "allow_system_packages",
             "lfs_path",
             "shared_libs",
+            "free_up_disk",
         }
     }
 

@@ -192,7 +192,7 @@ class Acceptor : public folly::AsyncServerSocket::AcceptCallback,
   }
 
   /**
-   * Time after drainAllConnections() or acceptStopped() during which
+   * Time after startDrainingAllConnections() or acceptStopped() during which
    * new requests on connections owned by the downstream
    * ConnectionManager will be processed normally.
    */
@@ -229,7 +229,8 @@ class Acceptor : public folly::AsyncServerSocket::AcceptCallback,
       int fd,
       const folly::SocketAddress& clientAddr,
       std::chrono::steady_clock::time_point acceptTime,
-      const AcceptInfo& info) noexcept;
+      const AcceptInfo& info,
+      folly::AsyncSocket::LegacyLifecycleObserver* observer) noexcept;
 
   /**
    * Begins either processing HTTP bytes (HTTP) or the SSL handshake (HTTPS)
@@ -238,7 +239,8 @@ class Acceptor : public folly::AsyncServerSocket::AcceptCallback,
       int fd,
       const folly::SocketAddress& clientAddr,
       std::chrono::steady_clock::time_point acceptTime,
-      TransportInfo& tinfo) noexcept;
+      TransportInfo& tinfo,
+      folly::AsyncSocket::LegacyLifecycleObserver* observer = nullptr) noexcept;
 
   /**
    * Creates and starts the handshake manager.
@@ -251,10 +253,11 @@ class Acceptor : public folly::AsyncServerSocket::AcceptCallback,
       TransportInfo& tinfo) noexcept;
 
   /**
-   * Drains all open connections of their outstanding transactions. When
-   * a connection's transaction count reaches zero, the connection closes.
+   * Starts draining all open connections of their outstanding transactions
+   * asynchronously. When a connection's transaction count reaches zero, the
+   * connection closes.
    */
-  virtual void drainAllConnections();
+  virtual void startDrainingAllConnections();
 
   /**
    * Drain defined percentage of connections.
@@ -273,10 +276,30 @@ class Acceptor : public folly::AsyncServerSocket::AcceptCallback,
    * Force-drop "pct" (0.0 to 1.0) of remaining client connections,
    * regardless of whether they are busy or idle.
    *
-   * Note: unlike dropAllConnections(), this function can be called
-   * from any thread.
+   * Note: unlike dropAllConnections(),
+   * this function can be called from any thread.
    */
   virtual void dropConnections(double pctToDrop);
+
+  /**
+   * Drops "pct" (0.0 to 1.0) of the connections active connections.
+   * Connection will be dropped only if filter (callback) returns true
+   */
+  virtual void dropEstablishedConnections(
+      double pctToDrop,
+      const std::function<bool(ManagedConnection*)>& filter);
+
+  /**
+   * Drops every idle for which idle time is less then *timeout*
+   *
+   * @param timeout - idle time threshold.
+   * @param droppedConnectionsCB - Callback will be invoked for dropped
+   *   connections, having number of dropped connection as input.
+   *
+   */
+  virtual void dropIdleConnectionsBasedOnTimeout(
+      std::chrono::milliseconds targetIdleTimeMs,
+      const std::function<void(size_t)>& droppedConnectionsCB);
 
   /**
    * Wrapper for connectionReady() that can be overridden by
@@ -355,6 +378,11 @@ class Acceptor : public folly::AsyncServerSocket::AcceptCallback,
    * via mvfst.
    */
   std::shared_ptr<fizz::server::FizzServerContext> recreateFizzContext();
+
+  /**
+   * Hook for checking allowlisted client addresses
+   */
+  virtual bool isPeerAddressAllowlisted(const folly::SocketAddress&);
 
  protected:
   using OnDataAvailableParams =
@@ -444,6 +472,15 @@ class Acceptor : public folly::AsyncServerSocket::AcceptCallback,
       folly::NetworkSocket fdNetworkSocket,
       const folly::SocketAddress& clientAddr,
       AcceptInfo /* info */) noexcept override;
+
+ public:
+  void acceptConnection(
+      folly::NetworkSocket fdNetworkSocket,
+      const folly::SocketAddress& clientAddr,
+      AcceptInfo /* info */,
+      folly::AsyncSocket::LegacyLifecycleObserver* lifeCycleObserver) noexcept;
+
+ protected:
   // TODO(T81599451): Remove the 'using' statement below after
   // eliminating the old AcceptCallback::acceptError callback
   using folly::AsyncServerSocket::AcceptCallback::acceptError;
@@ -503,6 +540,11 @@ class Acceptor : public folly::AsyncServerSocket::AcceptCallback,
   folly::AsyncTransport::UniquePtr transformTransport(
       folly::AsyncTransport::UniquePtr sock);
 
+  void transitionToDrained() {
+    state_ = State::kDone;
+    onConnectionsDrained();
+  }
+
   TLSTicketKeySeeds ticketSecrets_;
   std::shared_ptr<fizz::server::CertManager> fizzCertManager_{nullptr};
 
@@ -510,7 +552,7 @@ class Acceptor : public folly::AsyncServerSocket::AcceptCallback,
   Acceptor(Acceptor const&) = delete;
   Acceptor& operator=(Acceptor const&) = delete;
 
-  void checkDrained();
+  void checkIfDrained();
 
   State state_{State::kInit};
   uint64_t numPendingSSLConns_{0};
