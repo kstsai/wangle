@@ -23,29 +23,29 @@ namespace wangle {
 void ThreadSafeSSLSessionCache::setSSLSession(
     const std::string& identity,
     folly::ssl::SSLSessionUniquePtr session) noexcept {
-  SharedMutex::WriteHolder lock(mutex_);
+  std::unique_lock lock(mutex_);
   delegate_->setSSLSession(identity, std::move(session));
 }
 
 folly::ssl::SSLSessionUniquePtr ThreadSafeSSLSessionCache::getSSLSession(
     const std::string& identity) const noexcept {
-  SharedMutex::ReadHolder lock(mutex_);
+  std::shared_lock lock(mutex_);
   return delegate_->getSSLSession(identity);
 }
 
 bool ThreadSafeSSLSessionCache::removeSSLSession(
     const std::string& identity) noexcept {
-  SharedMutex::WriteHolder lock(mutex_);
+  std::unique_lock lock(mutex_);
   return delegate_->removeSSLSession(identity);
 }
 
 bool ThreadSafeSSLSessionCache::supportsPersistence() const noexcept {
-  SharedMutex::ReadHolder lock(mutex_);
+  std::shared_lock lock(mutex_);
   return delegate_->supportsPersistence();
 }
 
 size_t ThreadSafeSSLSessionCache::size() const {
-  SharedMutex::ReadHolder lock(mutex_);
+  std::shared_lock lock(mutex_);
   return delegate_->size();
 }
 

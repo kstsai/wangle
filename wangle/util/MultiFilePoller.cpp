@@ -56,7 +56,7 @@ MultiFilePoller::CallbackId MultiFilePoller::registerFiles(
   StringReferences cbPaths;
   size_t cbId;
   {
-    SharedMutex::WriteHolder wh(rwlock_);
+    std::unique_lock wh(rwlock_);
     cbId = getNextCallbackId();
     // Create the bi-directional relation between path and callback.
     for (const auto& path : paths) {
@@ -79,7 +79,7 @@ MultiFilePoller::CallbackId MultiFilePoller::registerFiles(
 void MultiFilePoller::cancelCallback(const CallbackId& cbId) {
   std::vector<std::string> pathsToErase;
   {
-    SharedMutex::WriteHolder wh(rwlock_);
+    std::unique_lock wh(rwlock_);
 
     auto pos = idsToCallbacks_.find(cbId.id_);
     if (pos == idsToCallbacks_.end()) {
@@ -117,7 +117,7 @@ void MultiFilePoller::onFileUpdated(const std::string& triggeredPath) {
   // A temporary read cache. Not worth it making it permanent because
   // files do not change frequently.
   std::unordered_map<std::string, std::string> filePathsToFileContents;
-  SharedMutex::ReadHolder rh(rwlock_);
+  std::shared_lock rh(rwlock_);
 
   const auto& callbacks = pathsToCallbackIds_.find(triggeredPath);
   if (callbacks == pathsToCallbackIds_.end()) {
