@@ -23,7 +23,6 @@
 #include <wangle/channel/Pipeline.h>
 #include <wangle/channel/test/MockHandler.h>
 
-#include <boost/thread.hpp>
 #include <folly/portability/GMock.h>
 #include <folly/portability/GTest.h>
 
@@ -88,7 +87,7 @@ class MockRoutingDataHandler : public RoutingDataHandler<char> {
 
 class MockRoutingDataHandlerFactory : public RoutingDataHandlerFactory<char> {
  public:
-  MockRoutingDataHandlerFactory() {}
+  MockRoutingDataHandlerFactory() = default;
 
   std::shared_ptr<RoutingDataHandler<char>> newHandler(
       uint64_t /*connId*/,

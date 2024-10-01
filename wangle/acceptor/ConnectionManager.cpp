@@ -124,6 +124,12 @@ void ConnectionManager::scheduleTimeout(
   }
 }
 
+void ConnectionManager::scheduleTimeoutRaw(
+    ManagedConnection* const connection,
+    std::chrono::milliseconds timeout) {
+  eventBase_->timer().scheduleTimeout(connection, timeout);
+}
+
 void ConnectionManager::scheduleTimeout(
     folly::HHWheelTimer::Callback* callback,
     std::chrono::milliseconds timeout) {
@@ -344,6 +350,15 @@ void ConnectionManager::dropConnections(double pct) {
     ManagedConnection& conn = conns_.front();
     removeConnection(&conn);
     conn.dropConnection();
+  }
+}
+
+void ConnectionManager::dropConnection(folly::SocketAddress& peerAddress) {
+  for (auto& connection : conns_) {
+    if (connection.getPeerAddress() == peerAddress) {
+      connection.dropConnection();
+      return;
+    }
   }
 }
 

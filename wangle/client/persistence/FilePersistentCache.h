@@ -19,7 +19,7 @@
 #include <folly/FileUtil.h>
 #include <folly/Memory.h>
 #include <folly/ScopeGuard.h>
-#include <folly/json.h>
+#include <folly/json/json.h>
 #include <wangle/client/persistence/FilePersistenceLayer.h>
 #include <wangle/client/persistence/LRUPersistentCache.h>
 
@@ -48,7 +48,7 @@ class FilePersistentCache : public PersistentCache<K, V> {
     cache_->init();
   }
 
-  ~FilePersistentCache() override {}
+  ~FilePersistentCache() override = default;
 
   /**
    * PersistentCache operations

@@ -15,6 +15,7 @@
  */
 
 #include <boost/thread/barrier.hpp>
+
 #include <folly/portability/GMock.h>
 #include <folly/portability/GTest.h>
 #include <wangle/channel/AsyncSocketHandler.h>
@@ -28,7 +29,7 @@ using namespace folly;
 using namespace wangle;
 using namespace testing;
 
-typedef StrictMock<MockHandlerAdapter<int, int>> IntHandler;
+using IntHandler = StrictMock<MockHandlerAdapter<int, int>>;
 class IntHandler2 : public StrictMock<MockHandlerAdapter<int, int>> {};
 
 ACTION(FireRead) {
@@ -258,7 +259,7 @@ TEST(PipelineTest, NoDetachOnOwner) {
 
 template <class Rin, class Rout = Rin, class Win = Rout, class Wout = Rin>
 class ConcreteHandler : public Handler<Rin, Rout, Win, Wout> {
-  typedef typename Handler<Rin, Rout, Win, Wout>::Context Context;
+  using Context = typename Handler<Rin, Rout, Win, Wout>::Context;
 
  public:
   void read(Context*, Rin /* msg */) override {}
@@ -267,9 +268,9 @@ class ConcreteHandler : public Handler<Rin, Rout, Win, Wout> {
   }
 };
 
-typedef HandlerAdapter<std::string, std::string> StringHandler;
-typedef ConcreteHandler<int, std::string> IntToStringHandler;
-typedef ConcreteHandler<std::string, int> StringToIntHandler;
+using StringHandler = HandlerAdapter<std::string, std::string>;
+using IntToStringHandler = ConcreteHandler<int, std::string>;
+using StringToIntHandler = ConcreteHandler<std::string, int>;
 
 TEST(Pipeline, MissingInboundOrOutbound) {
   auto pipeline = Pipeline<int, int>::create();
@@ -375,7 +376,7 @@ TEST(Pipeline, Concurrent) {
   boost::barrier b{2};
   auto spam = [&] {
     for (int i = 0; i < 100000; i++) {
-      b.wait();
+      b.count_down_and_wait();
       pipeline->read(i);
     }
   };

@@ -210,6 +210,28 @@ class ProjectCmdBase(SubCmd):
     def setup_project_cmd_parser(self, parser):
         pass
 
+    def create_builder(self, loader, manifest):
+        fetcher = loader.create_fetcher(manifest)
+        src_dir = fetcher.get_src_dir()
+        ctx = loader.ctx_gen.get_context(manifest.name)
+        build_dir = loader.get_project_build_dir(manifest)
+        inst_dir = loader.get_project_install_dir(manifest)
+        return manifest.create_builder(
+            loader.build_opts,
+            src_dir,
+            build_dir,
+            inst_dir,
+            ctx,
+            loader,
+            loader.dependencies_of(manifest),
+        )
+
+    def check_built(self, loader, manifest):
+        built_marker = os.path.join(
+            loader.get_project_install_dir(manifest), ".built-by-getdeps"
+        )
+        return os.path.exists(built_marker)
+
 
 class CachedProject(object):
     """A helper that allows calling the cache logic for a project
@@ -348,7 +370,7 @@ class InstallSysDepsCmd(ProjectCmdBase):
         parser.add_argument(
             "--os-type",
             help="Filter to just this OS type to run",
-            choices=["linux", "darwin", "windows"],
+            choices=["linux", "darwin", "windows", "pacman-package"],
             action="store",
             dest="ostype",
             default=None,
@@ -418,7 +440,10 @@ class InstallSysDepsCmd(ProjectCmdBase):
             packages = sorted(set(all_packages["homebrew"]))
             if packages:
                 cmd_args = ["brew", "install"] + packages
-
+        elif manager == "pacman-package":
+            packages = sorted(list(set(all_packages["pacman-package"])))
+            if packages:
+                cmd_args = ["pacman", "-S"] + packages
         else:
             host_tuple = loader.build_opts.host_type.as_tuple_string()
             print(
@@ -554,12 +579,16 @@ class BuildCmd(ProjectCmdBase):
 
         cache = cache_module.create_cache() if args.use_build_cache else None
 
-        # Accumulate the install directories so that the build steps
-        # can find their dep installation
-        install_dirs = []
+        dep_manifests = []
 
         for m in projects:
+            dep_manifests.append(m)
+
             fetcher = loader.create_fetcher(m)
+
+            if args.build_skip_lfs_download and hasattr(fetcher, "skip_lfs_download"):
+                print("skipping lfs download for %s" % m.name)
+                fetcher.skip_lfs_download()
 
             if isinstance(fetcher, SystemPackageFetcher):
                 # We are guaranteed that if the fetcher is set to
@@ -621,9 +650,10 @@ class BuildCmd(ProjectCmdBase):
                         build_dir,
                         inst_dir,
                         loader,
+                        dep_manifests,
                     )
                     for preparer in prepare_builders:
-                        preparer.prepare(install_dirs, reconfigure=reconfigure)
+                        preparer.prepare(reconfigure=reconfigure)
 
                     builder = m.create_builder(
                         loader.build_opts,
@@ -632,12 +662,13 @@ class BuildCmd(ProjectCmdBase):
                         inst_dir,
                         ctx,
                         loader,
+                        dep_manifests,
                         final_install_prefix=loader.get_project_install_prefix(m),
                         extra_cmake_defines=extra_cmake_defines,
                         cmake_target=args.cmake_target if m == manifest else "install",
                         extra_b2_args=extra_b2_args,
                     )
-                    builder.build(install_dirs, reconfigure=reconfigure)
+                    builder.build(reconfigure=reconfigure)
 
                     # If we are building the project (not dependency) and a specific
                     # cmake_target (not 'install') has been requested, then we don't
@@ -652,15 +683,14 @@ class BuildCmd(ProjectCmdBase):
 
                     # Only populate the cache from continuous build runs, and
                     # only if we have a built_marker.
-                    if args.schedule_type == "continuous" and has_built_marker:
+                    if (
+                        not args.skip_upload
+                        and args.schedule_type == "continuous"
+                        and has_built_marker
+                    ):
                         cached_project.upload()
                 elif args.verbose:
                     print("found good %s" % built_marker)
-
-            # Paths are resolved from front. We prepend rather than append as
-            # the last project in topo order is the project itself, which
-            # should be first in the path, then its deps and so on.
-            install_dirs.insert(0, inst_dir)
 
     def compute_dep_change_status(self, m, built_marker, loader):
         reconfigure = False
@@ -781,14 +811,6 @@ class BuildCmd(ProjectCmdBase):
             "--schedule-type", help="Indicates how the build was activated"
         )
         parser.add_argument(
-            "--extra-cmake-defines",
-            help=(
-                "Input json map that contains extra cmake defines to be used "
-                "when compiling the current project and all its deps. "
-                'e.g: \'{"CMAKE_CXX_FLAGS": "--bla"}\''
-            ),
-        )
-        parser.add_argument(
             "--cmake-target",
             help=("Target for cmake build."),
             default="install",
@@ -801,12 +823,6 @@ class BuildCmd(ProjectCmdBase):
                 "e.g.: 'cxxflags=-fPIC' 'cflags=-fPIC'"
             ),
             action="append",
-        )
-        parser.add_argument(
-            "--shared-libs",
-            help="Build shared libraries if possible",
-            action="store_true",
-            default=False,
         )
         parser.add_argument(
             "--free-up-disk",
@@ -831,14 +847,20 @@ class FixupDeps(ProjectCmdBase):
         # Accumulate the install directories so that the build steps
         # can find their dep installation
         install_dirs = []
+        dep_manifests = []
 
         for m in projects:
             inst_dir = loader.get_project_install_dir_respecting_install_prefix(m)
             install_dirs.append(inst_dir)
+            dep_manifests.append(m)
 
             if m == manifest:
+                ctx = loader.ctx_gen.get_context(m.name)
+                env = loader.build_opts.compute_env_for_install_dirs(
+                    loader, dep_manifests, ctx
+                )
                 dep_munger = create_dyn_dep_munger(
-                    loader.build_opts, install_dirs, args.strip
+                    loader.build_opts, env, install_dirs, args.strip
                 )
                 if dep_munger is None:
                     print(f"dynamic dependency fixups not supported on {sys.platform}")
@@ -861,41 +883,16 @@ class FixupDeps(ProjectCmdBase):
 @cmd("test", "test a given project")
 class TestCmd(ProjectCmdBase):
     def run_project_cmd(self, args, loader, manifest):
-        projects = loader.manifests_in_dependency_order()
-
-        # Accumulate the install directories so that the test steps
-        # can find their dep installation
-        install_dirs = []
-
-        for m in projects:
-            inst_dir = loader.get_project_install_dir(m)
-
-            if m == manifest or args.test_dependencies:
-                built_marker = os.path.join(inst_dir, ".built-by-getdeps")
-                if not os.path.exists(built_marker):
-                    print("project %s has not been built" % m.name)
-                    # TODO: we could just go ahead and build it here, but I
-                    # want to tackle that as part of adding build-for-test
-                    # support.
-                    return 1
-                fetcher = loader.create_fetcher(m)
-                src_dir = fetcher.get_src_dir()
-                ctx = loader.ctx_gen.get_context(m.name)
-                build_dir = loader.get_project_build_dir(m)
-                builder = m.create_builder(
-                    loader.build_opts, src_dir, build_dir, inst_dir, ctx, loader
-                )
-
-                builder.run_tests(
-                    install_dirs,
-                    schedule_type=args.schedule_type,
-                    owner=args.test_owner,
-                    test_filter=args.filter,
-                    retry=args.retry,
-                    no_testpilot=args.no_testpilot,
-                )
-
-            install_dirs.append(inst_dir)
+        if not self.check_built(loader, manifest):
+            print("project %s has not been built" % manifest.name)
+            return 1
+        self.create_builder(loader, manifest).run_tests(
+            schedule_type=args.schedule_type,
+            owner=args.test_owner,
+            test_filter=args.filter,
+            retry=args.retry,
+            no_testpilot=args.no_testpilot,
+        )
 
     def setup_project_cmd_parser(self, parser):
         parser.add_argument(
@@ -917,13 +914,22 @@ class TestCmd(ProjectCmdBase):
         )
 
 
+@cmd(
+    "debug",
+    "start a shell in the given project's build dir with the correct environment for running the build",
+)
+class DebugCmd(ProjectCmdBase):
+    def run_project_cmd(self, args, loader, manifest):
+        self.create_builder(loader, manifest).debug(reconfigure=False)
+
+
 @cmd("generate-github-actions", "generate a GitHub actions configuration")
 class GenerateGitHubActionsCmd(ProjectCmdBase):
     RUN_ON_ALL = """ [push, pull_request]"""
 
     def run_project_cmd(self, args, loader, manifest):
         platforms = [
-            HostType("linux", "ubuntu", "18"),
+            HostType("linux", "ubuntu", "22"),
             HostType("darwin", None, None),
             HostType("windows", None, None),
         ]
@@ -936,6 +942,11 @@ class GenerateGitHubActionsCmd(ProjectCmdBase):
     def get_run_on(self, args):
         if args.run_on_all_branches:
             return self.RUN_ON_ALL
+        if args.cron:
+            return f"""
+  schedule:
+    - cron: '{args.cron}'"""
+
         return f"""
   push:
     branches:
@@ -949,6 +960,7 @@ class GenerateGitHubActionsCmd(ProjectCmdBase):
         build_opts = setup_build_options(args, platform)
         ctx_gen = build_opts.get_context_generator()
         loader = ManifestLoader(build_opts, ctx_gen)
+        self.process_project_dir_arguments(args, loader)
         manifest = loader.load_manifest(args.project)
         manifest_ctx = loader.ctx_gen.get_context(manifest.name)
         run_on = self.get_run_on(args)
@@ -1136,8 +1148,10 @@ jobs:
 
             project_prefix = ""
             if not build_opts.is_windows():
-                project_prefix = (
-                    " --project-install-prefix %s:/usr/local" % manifest.name
+                prefix = loader.get_project_install_prefix(manifest) or "/usr/local"
+                project_prefix = " --project-install-prefix %s:%s" % (
+                    manifest.name,
+                    prefix,
                 )
 
             # If we have dep from same repo, we already built it and don't want to rebuild it again
@@ -1169,7 +1183,7 @@ jobs:
                 f"--final-install-prefix /usr/local\n"
             )
 
-            out.write("    - uses: actions/upload-artifact@v2\n")
+            out.write("    - uses: actions/upload-artifact@v4\n")
             out.write("      with:\n")
             out.write("        name: %s\n" % manifest.name)
             out.write("        path: _artifacts\n")
@@ -1179,9 +1193,13 @@ jobs:
                 and manifest.get("github.actions", "run_tests", ctx=manifest_ctx)
                 != "off"
             ):
+                num_jobs_arg = ""
+                if args.num_jobs:
+                    num_jobs_arg = f"--num-jobs {args.num_jobs} "
+
                 out.write("    - name: Test %s\n" % manifest.name)
                 out.write(
-                    f"      run: {getdepscmd}{allow_sys_arg} test --src-dir=. {manifest.name} {project_prefix}\n"
+                    f"      run: {getdepscmd}{allow_sys_arg} test {num_jobs_arg}--src-dir=. {manifest.name} {project_prefix}\n"
                 )
             if build_opts.free_up_disk and not build_opts.is_windows():
                 out.write("    - name: Show disk space at end\n")
@@ -1203,7 +1221,11 @@ jobs:
             help="Allow CI to fire on all branches - Handy for testing",
         )
         parser.add_argument(
-            "--ubuntu-version", default="20.04", help="Version of Ubuntu to use"
+            "--ubuntu-version", default="22.04", help="Version of Ubuntu to use"
+        )
+        parser.add_argument(
+            "--cron",
+            help="Specify that the job runs on a cron schedule instead of on pushes",
         )
         parser.add_argument(
             "--main-branch",
@@ -1310,6 +1332,20 @@ def parse_args():
         dest="facebook_internal",
     )
     add_common_arg(
+        "--shared-libs",
+        help="Build shared libraries if possible",
+        action="store_true",
+        default=False,
+    )
+    add_common_arg(
+        "--extra-cmake-defines",
+        help=(
+            "Input json map that contains extra cmake defines to be used "
+            "when compiling the current project and all its deps. "
+            'e.g: \'{"CMAKE_CXX_FLAGS": "--bla"}\''
+        ),
+    )
+    add_common_arg(
         "--allow-system-packages",
         help="Allow satisfying third party deps from installed system packages",
         action="store_true",
@@ -1323,9 +1359,26 @@ def parse_args():
         default=False,
     )
     add_common_arg(
+        "-su",
+        "--skip-upload",
+        help="skip upload steps",
+        action="store_true",
+        default=False,
+    )
+    add_common_arg(
         "--lfs-path",
         help="Provide a parent directory for lfs when fbsource is unavailable",
         default=None,
+    )
+    add_common_arg(
+        "--build-skip-lfs-download",
+        action="store_true",
+        default=False,
+        help=(
+            "Download from the URL, rather than LFS. This is useful "
+            "in cases where the upstream project has uploaded a new "
+            "version of the archive with a different hash"
+        ),
     )
 
     ap = argparse.ArgumentParser(

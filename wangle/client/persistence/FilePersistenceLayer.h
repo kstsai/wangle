@@ -17,7 +17,7 @@
 #pragma once
 
 #include <folly/FileUtil.h>
-#include <folly/json.h>
+#include <folly/json/json.h>
 #include <folly/portability/Unistd.h>
 #include <wangle/client/persistence/LRUPersistentCache.h>
 
@@ -26,7 +26,7 @@ namespace wangle {
 class FilePersistenceLayer : public CachePersistence {
  public:
   explicit FilePersistenceLayer(const std::string& file) : file_(file) {}
-  ~FilePersistenceLayer() override {}
+  ~FilePersistenceLayer() override = default;
 
   bool persist(const folly::dynamic& arrayOfKvPairs) noexcept override;
 

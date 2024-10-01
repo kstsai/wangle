@@ -20,9 +20,7 @@
 #include <wangle/ssl/SSLStats.h>
 #include <wangle/ssl/SSLUtil.h>
 
-#include <folly/fibers/Fiber.h>
 #include <folly/fibers/FiberManager.h>
-#include <folly/io/async/EventBase.h>
 #include <folly/portability/GFlags.h>
 #include <folly/portability/OpenSSL.h>
 
@@ -96,10 +94,10 @@ SSL_SESSION* ShardedLocalSSLSessionCache::lookupSession(
     const std::string& sessionId) {
   size_t bucket = hash(sessionId);
   SSL_SESSION* session = nullptr;
-  std::lock_guard<std::mutex> g(caches_[bucket]->lock);
+  std::lock_guard<std::mutex> g(caches_.at(bucket)->lock);
 
-  auto itr = caches_[bucket]->sessionCache.find(sessionId);
-  if (itr != caches_[bucket]->sessionCache.end()) {
+  auto itr = caches_.at(bucket)->sessionCache.find(sessionId);
+  if (itr != caches_.at(bucket)->sessionCache.end()) {
     session = itr->second;
   }
 
@@ -115,10 +113,10 @@ void ShardedLocalSSLSessionCache::storeSession(
     SSLStats* stats) {
   size_t bucket = hash(sessionId);
   SSL_SESSION* oldSession = nullptr;
-  std::lock_guard<std::mutex> g(caches_[bucket]->lock);
+  std::lock_guard<std::mutex> g(caches_.at(bucket)->lock);
 
-  auto itr = caches_[bucket]->sessionCache.find(sessionId);
-  if (itr != caches_[bucket]->sessionCache.end()) {
+  auto itr = caches_.at(bucket)->sessionCache.find(sessionId);
+  if (itr != caches_.at(bucket)->sessionCache.end()) {
     oldSession = itr->second;
   }
 
@@ -127,26 +125,26 @@ void ShardedLocalSSLSessionCache::storeSession(
     // This can happen in race conditions
     SSL_SESSION_free(oldSession);
   }
-  caches_[bucket]->removedSessions_ = 0;
-  caches_[bucket]->sessionCache.set(sessionId, session, true);
+  caches_.at(bucket)->removedSessions_ = 0;
+  caches_.at(bucket)->sessionCache.set(sessionId, session, true);
   if (stats) {
-    stats->recordSSLSessionFree(caches_[bucket]->removedSessions_);
+    stats->recordSSLSessionFree(caches_.at(bucket)->removedSessions_);
   }
 }
 
 void ShardedLocalSSLSessionCache::removeSession(const std::string& sessionId) {
   size_t bucket = hash(sessionId);
-  std::lock_guard<std::mutex> g(caches_[bucket]->lock);
+  std::lock_guard<std::mutex> g(caches_.at(bucket)->lock);
 
-  auto itr = caches_[bucket]->sessionCache.find(sessionId);
-  if (itr == caches_[bucket]->sessionCache.end()) {
+  auto itr = caches_.at(bucket)->sessionCache.find(sessionId);
+  if (itr == caches_.at(bucket)->sessionCache.end()) {
     VLOG(4) << "session ID " << sessionId << " not in cache";
     return;
   }
 
   // LRUCacheMap doesn't free on erase either
   SSL_SESSION_free(itr->second);
-  caches_[bucket]->sessionCache.erase(sessionId);
+  caches_.at(bucket)->sessionCache.erase(sessionId);
 }
 
 // SSLSessionCacheManager implementation
@@ -181,7 +179,7 @@ SSLSessionCacheManager::SSLSessionCacheManager(
       SSLSessionCacheManager::getLocalCache(maxCacheSize, cacheCullSize);
 }
 
-SSLSessionCacheManager::~SSLSessionCacheManager() {}
+SSLSessionCacheManager::~SSLSessionCacheManager() = default;
 
 void SSLSessionCacheManager::shutdown() {
   std::lock_guard<std::mutex> g(sCacheLock_);
@@ -285,7 +283,6 @@ SSL_SESSION* SSLSessionCacheManager::getSession(
 
   // look it up in the local cache first
   session.reset(localCache_->lookupSession(sessionId));
-#if FOLLY_OPENSSL_IS_110
   if (session == nullptr && externalCache_) {
     foreign = true;
     DCHECK(folly::fibers::onFiber());
@@ -304,7 +301,6 @@ SSL_SESSION* SSLSessionCacheManager::getSession(
       missReason = "reason: request not running on fiber;";
     }
   }
-#endif
 
   bool hit = (session != nullptr);
   if (stats_) {

@@ -25,8 +25,8 @@
 #include <wangle/ssl/TLSTicketKeyManager.h>
 
 #if defined(WANGLE_USE_FOLLY_TESTUTIL)
-#include <folly/experimental/TestUtil.h>
 #include <folly/io/async/test/TestSSLServer.h>
+#include <folly/testing/TestUtil.h>
 
 namespace {
 std::string get_resource(const char* res) {
@@ -297,8 +297,6 @@ TEST(SSLContextManagerTest, Test1) {
       sslCtxMgr.getSSLCtxBySuffix(SSLContextKey("abc.xyz.example.com")));
 }
 
-// This test uses multiple contexts, which requires SNI support to work at all.
-#if FOLLY_OPENSSL_HAS_SNI
 TEST(SSLContextManagerTest, TestResetSSLContextConfigs) {
   SSLContextManagerForTest sslCtxMgr(
       "vip_ssl_context_manager_test_", getSettings(), nullptr);
@@ -440,54 +438,6 @@ TEST(SSLContextManagerTest, TestResetSSLContextConfigs) {
   checkSeeds(
       sslCtxMgr.getSSLCtxByExactDomain(SSLContextKey("test.com")), seeds2);
 }
-#endif
-
-#if !(FOLLY_OPENSSL_IS_110) && !defined(OPENSSL_IS_BORINGSSL)
-TEST(SSLContextManagerTest, TestSessionContextIfSupplied) {
-  SSLContextManagerForTest sslCtxMgr(
-      "vip_ssl_context_manager_test_", getSettings(), nullptr);
-  SSLContextConfig ctxConfig;
-  ctxConfig.sessionContext = "test";
-  ctxConfig.addCertificateBuf(kTestCert1PEM, kTestCert1Key);
-
-  SSLCacheOptions cacheOptions;
-  SocketAddress addr;
-
-  sslCtxMgr.addSSLContextConfig(
-      ctxConfig, cacheOptions, nullptr, addr, nullptr);
-
-  using namespace std::string_literals;
-  auto ctx = sslCtxMgr.getSSLCtx("test.com"s);
-  ASSERT_NE(ctx, nullptr);
-  auto sessCtxFromCtx = std::string(
-      reinterpret_cast<char*>(ctx->getSSLCtx()->sid_ctx),
-      ctx->getSSLCtx()->sid_ctx_length);
-  EXPECT_EQ(*ctxConfig.sessionContext, sessCtxFromCtx);
-}
-
-TEST(SSLContextManagerTest, TestSessionContextIfSessionCacheAbsent) {
-  SSLContextManagerForTest sslCtxMgr(
-      "vip_ssl_context_manager_test_", getSettings(), nullptr);
-  SSLContextConfig ctxConfig;
-  ctxConfig.sessionContext = "test";
-  ctxConfig.sessionCacheEnabled = false;
-  ctxConfig.addCertificateBuf(kTestCert1PEM, kTestCert1Key);
-
-  SSLCacheOptions cacheOptions;
-  SocketAddress addr;
-
-  sslCtxMgr.addSSLContextConfig(
-      ctxConfig, cacheOptions, nullptr, addr, nullptr);
-
-  using namespace std::string_literals;
-  auto ctx = sslCtxMgr.getSSLCtx("test.com"s);
-  ASSERT_NE(ctx, nullptr);
-  auto sessCtxFromCtx = std::string(
-      reinterpret_cast<char*>(ctx->getSSLCtx()->sid_ctx),
-      ctx->getSSLCtx()->sid_ctx_length);
-  EXPECT_EQ(*ctxConfig.sessionContext, sessCtxFromCtx);
-}
-#endif
 
 TEST(SSLContextManagerTest, TestSessionContextCertRemoval) {
   SSLContextManagerForTest sslCtxMgr(

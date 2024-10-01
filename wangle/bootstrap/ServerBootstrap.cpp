@@ -17,7 +17,6 @@
 #include <folly/executors/thread_factory/NamedThreadFactory.h>
 #include <folly/io/async/EventBaseManager.h>
 #include <wangle/bootstrap/ServerBootstrap.h>
-#include <wangle/channel/Handler.h>
 
 namespace wangle {
 
@@ -28,7 +27,7 @@ void ServerWorkerPool::registerEventBase(folly::EventBase& evb) {
     workers_->push_back({&evb, worker});
   }
 
-  for (auto socket : *sockets_) {
+  for (const auto& socket : *sockets_) {
     socket->getEventBase()->runImmediatelyOrRunInEventBaseThreadAndWait(
         [this, worker, socket]() {
           socketFactory_->addAcceptCB(

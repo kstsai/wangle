@@ -4,6 +4,8 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+# pyre-unsafe
+
 import os
 import re
 import shutil
@@ -18,6 +20,8 @@ if typing.TYPE_CHECKING:
 class CargoBuilder(BuilderBase):
     def __init__(
         self,
+        loader,
+        dep_manifests,  # manifests of dependencies
         build_opts: "BuildOptions",
         ctx,
         manifest,
@@ -27,11 +31,17 @@ class CargoBuilder(BuilderBase):
         build_doc,
         workspace_dir,
         manifests_to_build,
-        loader,
         cargo_config_file,
     ) -> None:
         super(CargoBuilder, self).__init__(
-            build_opts, ctx, manifest, src_dir, build_dir, inst_dir
+            loader,
+            dep_manifests,
+            build_opts,
+            ctx,
+            manifest,
+            src_dir,
+            build_dir,
+            inst_dir,
         )
         self.build_doc = build_doc
         self.ws_dir = workspace_dir
@@ -41,7 +51,7 @@ class CargoBuilder(BuilderBase):
 
     def run_cargo(self, install_dirs, operation, args=None) -> None:
         args = args or []
-        env = self._compute_env(install_dirs)
+        env = self._compute_env()
         # Enable using nightly features with stable compiler
         env["RUSTC_BOOTSTRAP"] = "1"
         env["LIBZ_SYS_STATIC"] = "1"
@@ -116,6 +126,19 @@ incremental = false
                 if override not in cargo_content:
                     new_content += override
 
+            if self.build_opts.fbsource_dir:
+                # Point to vendored crates.io if possible
+                try:
+                    from .facebook.rust import vendored_crates
+
+                    new_content = vendored_crates(
+                        self.build_opts.fbsource_dir, new_content
+                    )
+                except ImportError:
+                    # This FB internal module isn't shippped to github,
+                    # so just rely on cargo downloading crates on it's own
+                    pass
+
         if new_content != cargo_content:
             with open(cargo_config_file, "w") as f:
                 print(
@@ -123,20 +146,9 @@ incremental = false
                 )
                 f.write(new_content)
 
-        if self.build_opts.fbsource_dir:
-            # Point to vendored crates.io if possible
-            try:
-                from .facebook.rust import vendored_crates
-
-                vendored_crates(self.build_opts.fbsource_dir, cargo_config_file)
-            except ImportError:
-                # This FB internal module isn't shippped to github,
-                # so just rely on cargo downloading crates on it's own
-                pass
-
         return dep_to_git
 
-    def _prepare(self, install_dirs, reconfigure) -> None:
+    def _prepare(self, reconfigure) -> None:
         build_source_dir = self.build_source_dir()
         self.recreate_dir(self.src_dir, build_source_dir)
 
@@ -145,7 +157,7 @@ incremental = false
         if self.ws_dir is not None:
             self._patchup_workspace(dep_to_git)
 
-    def _build(self, install_dirs, reconfigure) -> None:
+    def _build(self, reconfigure) -> None:
         # _prepare has been run already. Actually do the build
         build_source_dir = self.build_source_dir()
 
@@ -160,14 +172,14 @@ incremental = false
 
         if self.manifests_to_build is None:
             self.run_cargo(
-                install_dirs,
+                self.install_dirs,
                 "build",
                 build_args,
             )
         else:
             for manifest in self.manifests_to_build:
                 self.run_cargo(
-                    install_dirs,
+                    self.install_dirs,
                     "build",
                     build_args
                     + [
@@ -178,24 +190,22 @@ incremental = false
 
         self.recreate_dir(build_source_dir, os.path.join(self.inst_dir, "source"))
 
-    def run_tests(
-        self, install_dirs, schedule_type, owner, test_filter, retry, no_testpilot
-    ) -> None:
+    def run_tests(self, schedule_type, owner, test_filter, retry, no_testpilot) -> None:
         if test_filter:
             args = ["--", test_filter]
         else:
             args = []
 
         if self.manifests_to_build is None:
-            self.run_cargo(install_dirs, "test", args)
+            self.run_cargo(self.install_dirs, "test", args)
             if self.build_doc:
-                self.run_cargo(install_dirs, "doc", ["--no-deps"])
+                self.run_cargo(self.install_dirs, "doc", ["--no-deps"])
         else:
             for manifest in self.manifests_to_build:
                 margs = ["--manifest-path", self.manifest_dir(manifest)]
-                self.run_cargo(install_dirs, "test", args + margs)
+                self.run_cargo(self.install_dirs, "test", args + margs)
                 if self.build_doc:
-                    self.run_cargo(install_dirs, "doc", ["--no-deps"] + margs)
+                    self.run_cargo(self.install_dirs, "doc", ["--no-deps"] + margs)
 
     def _patchup_workspace(self, dep_to_git) -> None:
         """
@@ -336,7 +346,7 @@ path = "{null_file}"
 
             crate_source_map = {}
             if dep_crate_map:
-                for (crate, subpath) in dep_crate_map.items():
+                for crate, subpath in dep_crate_map.items():
                     if crate not in crate_source_map:
                         if self.build_opts.is_windows():
                             subpath = subpath.replace("/", "\\")
@@ -444,7 +454,7 @@ path = "{null_file}"
         """
         search_pattern = '[package]\nname = "{}"'.format(crate)
 
-        for (_crate, crate_source_dir) in crate_source_map.items():
+        for _crate, crate_source_dir in crate_source_map.items():
             for crate_root, _, files in os.walk(crate_source_dir):
                 if "Cargo.toml" in files:
                     with open(os.path.join(crate_root, "Cargo.toml"), "r") as f:

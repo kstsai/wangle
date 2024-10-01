@@ -24,12 +24,6 @@
 
 #include <openssl/ssl.h>
 
-#ifdef OPENSSL_NO_TLSEXT
-#define OPENSSL_TICKETS 0
-#else
-#define OPENSSL_TICKETS OPENSSL_VERSION_NUMBER >= 0x1000105fL
-#endif
-
 namespace wangle {
 
 /**
@@ -76,7 +70,7 @@ class SSLSessionCallbacks {
     return 0;
   }
 
-  virtual ~SSLSessionCallbacks() {}
+  virtual ~SSLSessionCallbacks() = default;
 
   /**
    * Sets up SSL Session callbacks on a context.  The application is
